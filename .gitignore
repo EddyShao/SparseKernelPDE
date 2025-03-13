@@ -1,0 +1,9 @@
+*.npz
+output/
+archive/
+cfg/
+experiment_*/
+*.ipynb
+output_scripts/
+.history/
+__pycache__/
