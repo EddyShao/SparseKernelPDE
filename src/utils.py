@@ -2,6 +2,7 @@ import numpy as np
 import jax.numpy as jnp
 import jax
 # jax.config.update("jax_enable_x64", True)
+from itertools import product
 
 def computeProx(v, mu):
     """
@@ -106,7 +107,7 @@ def sample_bnd_obs(D, Nobs, method='grid'):
         raise ValueError("Unsupported sampling method")
     
     return obs
-    
+
 
 
 class Phi:
@@ -166,23 +167,33 @@ def shapeParser(func, pad=False):
     else:
         def wrapper(self, X, s, c, *args):
             pad_size = self.pad_size
-            N, dim = X.shape  # Extract shape
-            X_padded = jnp.zeros((pad_size, dim)).at[:N, :].set(X)  # Pad along first dim
-            s_padded = jnp.zeros(pad_size).at[:N].set(s)  # Pad along first dim
+            N, d = X.shape  # Extract shape
+            _, s_dim = s.shape
+            X_padded = jnp.zeros((pad_size, d)).at[:N, :].set(X)  # Pad along first dim
+            s_padded = jnp.zeros((pad_size, s_dim)).at[:N, :].set(s)
             c_padded = jnp.zeros(pad_size).at[:N].set(c)  # Pad along first dim
 
             # Call the function and get the output
-            output = func(self, (pad_size, dim), X_padded, s_padded, c_padded, *args)
+            output = func(self, (pad_size, d), X_padded, s_padded, c_padded, *args)
 
-            if output.ndim == 1:
+            def slice_arr(arr):
+                arr_shape = arr.shape
+                if arr_shape[0] == pad_size:
+                    slice_sizes = (N,) + arr_shape[1:]
+                else:
+                    slice_sizes = (arr_shape[0], N) + arr_shape[2:]   
+                arr_sliced = jax.lax.dynamic_slice(arr, (0,) * arr.ndim, slice_sizes)
+
+                return arr_sliced
+            
+            if type(output) == dict:
+                for key in output.keys():
+                    output[key] = slice_arr(output[key])
+                output_sliced = output
+            elif output.ndim == 1:
                 return output
             else:
-                output_shape = output.shape
-                if output_shape[0] == pad_size:
-                    slice_sizes = (N,) + output_shape[1:]
-                else:
-                    slice_sizes = (output_shape[0], N) + output_shape[2:]   
-                output_sliced = jax.lax.dynamic_slice(output, (0,) * output.ndim, slice_sizes)
+                output_sliced = output
 
             return output_sliced
     return wrapper

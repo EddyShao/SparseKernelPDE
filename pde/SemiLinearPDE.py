@@ -1,6 +1,7 @@
 # import jax.numpy as np
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 from src.GaussianKernel import GaussianKernel
 # from kernel.GaussianKernel_backup import GaussianKernel
 # from src.GaussianKernel_backup import GaussianKernel
@@ -13,13 +14,22 @@ jax.config.update("jax_enable_x64", False)
 # set the random seed
 
 
-
+    
 class Kernel(GaussianKernel):
-    def __init__(self, d, power, mask=False, D=None):
-        super().__init__(d=d, power=power)
+    def __init__(self, d, power, sigma_max, sigma_min, anisotropic=False, mask=False, D=None):
+        super().__init__(d=d, power=power, sigma_max=sigma_max, sigma_min=sigma_min, anisotropic=anisotropic)
         self.mask = mask
         self.D = D
-    # OVERRIDE 1. P_gauss_X_c 2. DP_gauss
+
+        # linear results for computing E and B
+        self.linear = {
+            'Id': self.gauss_X_c_Xhat,
+            'Lap': self.Lap_gauss_X_c_Xhat,
+        }
+
+        # linear results required for computing linearized E and B
+        self.DE = ['Id'] 
+        self.DB = []
 
     @partial(jax.jit, static_argnums=(0,))
     def gauss(self, x, s, xhat):
@@ -28,26 +38,46 @@ class Kernel(GaussianKernel):
             mask = jnp.prod(xhat - self.D[:, 0]) * jnp.prod(self.D[:, 1] - xhat)
             output = output * mask
         return output
-
-    @shapeParser    
+    
+    @shapeParser
     @partial(jax.jit, static_argnums=(0, 1))
     def Lap_gauss_X_c(self, X_shape, X, S, c, xhat):
         return jnp.trace(jax.hessian(self.gauss_X_c, argnums=3)(X, S, c, xhat))
+    
+    @partial(shapeParser, pad=True)
+    @partial(jax.jit, static_argnums=(0, 1))
+    def Lap_gauss_X_c_Xhat(self, X_shape, X, S, c, Xhat): 
+        return jax.vmap(self.Lap_gauss_X_c, in_axes=(None, None, None, 0))(X, S, c, Xhat)
 
     @shapeParser
     @partial(jax.jit, static_argnums=(0, 1))
-    def P_gauss_X_c(self, X_shape, X, S, c, xhat):
-        """
-        Compute the PDE operator of the Gaussian kernel.
-        """
+    def E_gauss_X_c(self, X_shape, X, S, c, xhat):
         return - self.Lap_gauss_X_c(X, S, c, xhat) + self.gauss_X_c(X, S, c, xhat) ** 3
+
+    @shapeParser
+    @partial(jax.jit, static_argnums=(0, 1))
+    def B_gauss_X_c(self, X_shape, X, S, c, xhat):
+        return self.gauss_X_c(X, S, c, xhat)
+    
+
+    @partial(jax.jit, static_argnums=(0,))
+    def E_gauss_X_c_Xhat(self, **linear_results):
+        return - linear_results['Lap'] + linear_results['Id'] ** 3
+
+    @partial(jax.jit, static_argnums=(0,))
+    def B_gauss_X_c_Xhat(self, **linear_results):
+        return linear_results['Id']
     
     @partial(jax.jit, static_argnums=(0,))
-    def DP_gauss(self, x, s, xhat, u):
-        return -jnp.trace(jax.hessian(self.gauss, argnums=2)(x, s, xhat)) + 3 * u ** 2 * self.gauss(x, s, xhat)
+    def DE_gauss(self, x, s, xhat, *args):
+        return -jnp.trace(jax.hessian(self.gauss, argnums=2)(x, s, xhat)) + 3 * args[0] ** 2 * self.gauss(x, s, xhat)
 
+    @partial(jax.jit, static_argnums=(0,))
+    def DB_gauss(self, x, s, xhat, *args):
+        return self.gauss(x, s, xhat)
 
-class ProblemNNLapVar:
+    
+class PDE:
     def __init__(self, alg_opt):
         """
         Initializes the problem setup for a neural network-based Laplacian solver.
@@ -55,9 +85,10 @@ class ProblemNNLapVar:
         # Problem parameters
         self.name = 'SemiLinearPDE'
         self.sigma_min = alg_opt.get('sigma_min', 1e-3)
+        self.sigma_max = alg_opt.get('sigma_max', 1.0)
 
         self.d = 2  # spatial dimension
-        self.dim = self.d + 1 # weight dimension
+        
         
         self.scale = alg_opt.get('scale', 1.0) # Domain size
         self.seed = alg_opt.get('seed', 200)
@@ -69,7 +100,7 @@ class ProblemNNLapVar:
         self.Omega = np.array([
             [-2.0, 2.0],
             [-2.0, 2.0],
-            [np.log(self.sigma_min), 0]
+            [-10.0, 0]   
         ])
         
         self.D = np.array([
@@ -77,21 +108,34 @@ class ProblemNNLapVar:
                 [-1., 1.],
         ])
 
-        # self.Omega = np.array([
-        #     [-0.5, 1.5],
-        #     [-0.5, 1.5],
-        #     [np.log(self.sigma_min), 0]
-        # ])
-        # self.D = np.array([
-        #         [0., 1.],
-        #         [0., 1.],
-        # ])
         self.vol_D = np.prod(self.D[:, 1] - self.D[:, 0])
 
-        self.kernel = Kernel(d=self.d, power=self.d+2.01, mask=(self.scale<1e-5), D=self.D)
-        self.kernel.sigma_max = alg_opt.get('sigma_max', 1.0)
+        self.anisotropic = alg_opt.get('anisotropic', False)
+        self.kernel = Kernel(d=self.d, power=self.d+2.01, 
+                             mask=(self.scale<1e-5), D=self.D, 
+                             anisotropic=self.anisotropic,
+                             sigma_max=self.sigma_max, sigma_min=self.sigma_min)
+        
+        if self.anisotropic:
+            self.dim = 2 * self.d # weight dimension
+        else:
+            self.dim = self.d + 1
 
-        self.u_zero = {"x": np.zeros((0, self.d)), "s": np.zeros((0)),  "u": np.zeros((0))} # initial solution
+
+        self.Omega = np.array([
+            [-2.0, 2.0],
+            [-2.0, 2.0],
+            [-10.0, 0],
+        ])
+        
+        if self.anisotropic:
+            self.Omega = np.vstack([self.Omega[:self.d, :], np.tile(self.Omega[self.d, :], (self.d, 1))])
+
+        assert self.dim == self.Omega.shape[0] and self.d == self.Omega.shape[1]
+
+
+        self.u_zero = {"x": np.zeros((0, self.d)), "s": np.zeros((0, self.dim-self.d)),  "u": np.zeros((0))} # initial solution for anisotropic
+
 
         # Observation set
         self.Nobs = alg_opt.get('Nobs', 50)
@@ -132,51 +176,14 @@ class ProblemNNLapVar:
         obs_int, obs_bnd = sample_int_obs(self.D, Nobs, method), sample_bnd_obs(self.D, Nobs, method)
         return obs_int, obs_bnd
 
-    # def at_boundary(self, xhat, D=None):
-    #     """
-    #     return a boolean array indicating whether the points are at the boundary
-    #     """
-    #     if D is None:
-    #         D = self.D
-    #     Gamma_D =  np.any(
-    #         np.isclose(xhat, D[:, 0]) |  # Compare with lower bound
-    #         np.isclose(xhat, D[:, 1]),   # Compare with upper bound
-    #         axis=1  # Ensure it checks each row (N,)
-    #     )
-
-    #     return Gamma_D
-
-    # def sample_obs(self, Nobs, D=None, method='grid'):
-    #     """
-    #     Samples observations from D
-    #     method: 'uniform' or 'grid'
-    #     """
-
-    #     if D is None:
-    #         D = self.D
-        
-    #     if method == 'uniform':
-    #         raise NotImplementedError("Uniform sampling not implemented yet.")
-    #     elif method == 'grid':
-    #         obs = []
-    #         for i in range(self.d):
-    #             obs.append(np.linspace(D[i, 0], D[i, 1], Nobs))
-    #         obs = np.meshgrid(*obs, indexing='ij')
-    #         obs = np.vstack([obs[i].flatten() for i in range(self.dim - 1)]).T
-        
-    #     Gamma_D = self.at_boundary(obs)
-    #     obs_int = obs[~Gamma_D, :]
-    #     obs_bnd = obs[Gamma_D, :]
-    #     return obs_int, obs_bnd
-
     def sample_param(self, Ntarget):
         """
         Generates Ntarget random parameters in the desired parameter set.
         """
         # randomx = self.Omega[0, 0] + (self.Omega[0, 1] - self.Omega[0, 0]) * np.random.rand(1, Ntarget)
         
-        randomx = self.Omega[0, 0] + (self.Omega[:-1, 1] - self.Omega[:-1, 0]) * np.random.rand(Ntarget, self.d)
-        randoms = self.Omega[-1, 0] + (self.Omega[-1, 1] - self.Omega[-1, 0]) * np.random.rand(Ntarget)
+        randomx = self.Omega[0, 0] + (self.Omega[:self.d, 1] - self.Omega[:self.d, 0]) * np.random.rand(Ntarget, self.d)
+        randoms = self.Omega[-1, 0] + (self.Omega[self.d:, 1] - self.Omega[self.d:, 0]) * np.tile(np.random.rand(Ntarget)[:, None], (1, self.dim-self.d))
 
         return randomx, randoms
 
@@ -184,18 +191,17 @@ class ProblemNNLapVar:
         """
         Plots the forward solution.
         """
-        assert self.dim == 3 
+        # assert self.dim == 3 
 
         # # Extract the domain range
         # pO = self.Omega[:-1, :]
         plt.close('all')  # Close previous figure to prevent multiple windows
 
         # Create a new figure
-        fig = plt.figure(figsize=(10, 8))
-        ax1 = fig.add_subplot(221, projection='3d')
-        ax2 = fig.add_subplot(222, projection='3d')
-        ax3 = fig.add_subplot(223)
-        ax4 = fig.add_subplot(224)
+        fig = plt.figure(figsize=(15, 5))
+        ax1 = fig.add_subplot(131, projection='3d')
+        ax2 = fig.add_subplot(132, projection='3d')
+        ax3 = fig.add_subplot(133)
         # Manually set figure position on screen
         # try:
         #     fig_manager = plt.get_current_fig_manager()
@@ -234,31 +240,27 @@ class ProblemNNLapVar:
 
         # plot all collocation point X
         # together with error countour plot
-        contour = ax3.contourf(X, Y, np.abs(Gu.reshape(100, 100) - f1), cmap='viridis')
+        contour = ax3.contourf(X, Y, np.abs(Gu.reshape(100, 100) - f1), cmap='viridis')        
         ax3.scatter(x[:, 0].flatten(), x[:, 1].flatten(), color='r', marker='x')
-        for xi, yi, r in zip(x[:, 0].flatten(), x[:, 1].flatten(), sigma):
-            circle = plt.Circle((xi, yi), r, color='r', fill=False, linestyle='dashed', label="Reference circle")
-            ax3.add_patch(circle)
+        if self.anisotropic:
+            for xi, yi, ai, bi in zip(x[:, 0].flatten(), x[:, 1].flatten(), sigma[:, 0].flatten(), sigma[:, 1].flatten()):
+                ellipse = patches.Ellipse((xi, yi), width=2*ai, height=2*bi,
+                              edgecolor='r', facecolor='none',
+                              linestyle='dashed', label="Reference ellipse")
+                ax3.add_patch(ellipse)
+        else:
+            for xi, yi, r in zip(x[:, 0].flatten(), x[:, 1].flatten(), sigma.flatten()):
+                circle = plt.Circle((xi, yi), r, color='r', fill=False, linestyle='dashed', label="Reference circle")
+                ax3.add_patch(circle)
+
         ax3.set_aspect('equal')  # Ensures circles are properly shaped
-        # # set colorbar
+        # # set colorbars
         ax3.set_xlim(self.Omega[0, 0], self.Omega[0, 1])
         ax3.set_ylim(self.Omega[1, 0], self.Omega[1, 1])
         ax3.set_title("Collocation Points, Error Contour") 
         fig.colorbar(contour, ax=ax3, shrink=0.5, aspect=5)   
-        # # l2 norm of the difference integrated on the domain
-        # l2_error = np.sqrt(np.sum((Gu - f1.flatten())**2) * (self.L**2) / (100 * 100))
-        # # L_inf norm of the difference
-        # L_inf_error = np.max(np.abs(Gu - f1.flatten()))
-        # self.epochs.append(epoch)
-        # self.L_inf_error.append(L_inf_error)
-        # self.L2_error.append(l2_error)
-        # ax4.plot(self.epochs, self.L_inf_error, label='L_inf error')
-        # ax4.plot(self.epochs, self.L2_error, label='L2 error')
-        # ax4.set_xlabel("Epochs")
-        # ax4.legend()
-        # plt.suptitle(f"L_inf error: {L_inf_error:.4f}, L2 error: {l2_error:.4f}, # points: {u['x'].shape[1]} \n alpha: {alpha}, BNDscale: {self.obj.scale}")
-        # plt.tight_layout()
-        plt.draw()
+
+        plt.show(block=False)
         plt.pause(1.0)  
 
 
