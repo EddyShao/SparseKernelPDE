@@ -32,7 +32,7 @@ We run the code by running `test_*.py`, which defines all the hyperparameters.
 e.g.: 
 CommandLine: 
 ```
-python test_SemiLinear.py --Nobs 20 --sampling uniform --scale 0 --alpha 1e-3
+python test_SemiLinear.py --Nobs 40 --sampling uniform --scale 1000 --alpha 1e-3 --TOL 1e-3 --T 50 
 ```
 
 
