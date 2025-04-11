@@ -1,7 +1,6 @@
 from pde.SemiLinearPDE import PDE
 # from src.solver import solve
 from src.solver_active import solve
-# from src.solver_first_order import solve
 
 
 import numpy as np
@@ -19,10 +18,10 @@ parser = argparse.ArgumentParser(description='Run the algorithm to solve PDE pro
 parser.add_argument('--anisotropic', action='store_true', help='Enable anisotropic mode (default: False)')
 parser.add_argument('--sigma_max', type=float, default=1.0, help='Maximum value of the kernel width.')
 parser.add_argument('--sigma_min', type=float, default=1e-3, help='Minimum value of the kernel width.')
-parser.add_argument('--blocksize', type=int, default=100, help='Block size for the anisotropic mode.')
+parser.add_argument('--blocksize', type=int, default=300, help='Block size for the anisotropic mode.')
 parser.add_argument('--Nobs', type=int, default=50, help='Base number of observations')
 parser.add_argument('--sampling', type=str, default='grid', help='Sampling method for the observations.')
-parser.add_argument('--scale', type=float, default=1000, help='penalty for the boundary condition')
+parser.add_argument('--scale', type=float, default=0, help='penalty for the boundary condition')
 parser.add_argument('--TOL', type=float, default=1e-5, help='Tolerance for stopping.')
 parser.add_argument('--max_step', type=int, default=5000, help='Maximum number of steps.')
 parser.add_argument('--print_every', type=int, default=100, help='Print every n steps.')
@@ -62,49 +61,29 @@ def f_help(x, center=(0.2, 0.30), k=8, R_0=0.2):
     return result
 
 #########################################################
-############ Option 1: Easy function ####################
+####################### two bump ########################
 #########################################################
 
-# the function is written as default in the SemiLinearPDE.py
+R_1 = 0.3
+R_2 = 0.15
+center_1 = [0.30, 0.30]
+center_2 = [-0.30, -0.30]
+k1 = 12
+k2 = 4
 
-#########################################################
-### Option 2: Multi-scales Sharp-transition function ####
-#########################################################
-
-# R = 0.3
-# center = [0., 0.]
-# k = 10
-# def ex_sol(x):
-#    return ex_sol_help(x, center=center, k=k, R_0=R)
-
-# def f(x):
-#    return f_help(x, center=center, k=k, R_0=R) + ex_sol(x) ** 3
+def ex_sol(x):
+    return ex_sol_help(x, center=center_1, k=k1, R_0=R_1) + ex_sol_help(x, center=center_2, k=k2, R_0=R_2)
 
 
-#########################################################
-### Option 3: Multi-scales Sharp-transition function ####
-#########################################################
-
-# R_1 = 0.3
-# R_2 = 0.15
-# center_1 = [0.30, 0.30]
-# center_2 = [-0.30, -0.30]
-# k1 = 12
-# k2 = 4
-
-# def ex_sol(x):
-#     return ex_sol_help(x, center=center_1, k=k1, R_0=R_1) + ex_sol_help(x, center=center_2, k=k2, R_0=R_2)
-
-
-# def f(x):
-#     return f_help(x, center=center_1, k=k1, R_0=R_1) + f_help(x, center=center_2, k=k2, R_0=R_2) + ex_sol(x) ** 3
-
+def f(x):
+    return f_help(x, center=center_1, k=k1, R_0=R_1) + f_help(x, center=center_2, k=k2, R_0=R_2) + ex_sol(x) ** 3
 
 
 p = PDE(alg_opts)
 
-# p.f = f
-# p.ex_sol = ex_sol
+p.f = f
+p.ex_sol = ex_sol
+p.name = 'SemiLinearTwoBumpAdaptive'
 
 
 rhs = p.f(p.xhat)
@@ -117,40 +96,84 @@ if args.add_noise:
 rhs[-p.Nx_bnd:] = p.ex_sol(p.xhat_bnd)
 
 
-alg_out = solve(p, rhs, alg_opts)
 
-# post-processing alg_out
+def evaluate_and_save_solution(p, rhs, alg_opts, args):
+    """
+    Solves the system, evaluates L_inf and L_2 error, pads solution history,
+    and saves the result to file if specified.
 
-assert len(alg_out['xk']) == len(alg_out['sk']) == len(alg_out['ck'])
-num_iter = len(alg_out['sk'])
-max_supp = max([xk.shape[0] for xk in alg_out['xk']])
-xk_padded = np.zeros((num_iter, max_supp, p.d))
-sk_padded = np.zeros((num_iter, max_supp, p.dim-p.d))
-ck_padded = np.zeros((num_iter, max_supp))
+    Parameters:
+        p: problem definition (should include kernel, test points, exact solution, etc.)
+        rhs: right-hand side for the solver
+        alg_opts: algorithm options (e.g., tolerances, initialization)
+        args: arguments including save_dir and save_idx
+    """
+    print()
+    print('#' * 20)
+    print('alpha:', alg_opts['alpha'])
+    print('#' * 20)
+    print()
+    alg_out = solve(p, rhs, alg_opts)
 
-for i in range(num_iter):
-    xk_padded[i, :alg_out['xk'][i].shape[0]] = alg_out['xk'][i]
-    sk_padded[i, :alg_out['sk'][i].shape[0]] = alg_out['sk'][i]
-    ck_padded[i, :alg_out['ck'][i].shape[0]] = alg_out['ck'][i]
+    # Define prediction function
+    u_pred = lambda xhat_vec: p.kernel.gauss_X_c_Xhat(
+        alg_out['xk'][-1],
+        alg_out['sk'][-1],
+        alg_out['ck'][-1],
+        xhat_vec
+    )
 
-alg_out['xk'] = xk_padded
-alg_out['sk'] = sk_padded
-alg_out['ck'] = ck_padded
+    # Compute predictions and errors
+    y_pred_bnd = u_pred(p.test_bnd)
+    y_true_bnd = p.ex_sol(p.test_bnd)
+    y_pred_int = u_pred(p.test_int)
+    y_true_int = p.ex_sol(p.test_int)
 
-# combine alg_out with alg_opts
-alg_out.update(alg_opts)
+    L_inf_bnd = np.max(np.abs(y_pred_bnd - y_true_bnd))
+    L_inf_int = np.max(np.abs(y_pred_int - y_true_int))
+    L_2 = np.sqrt(
+        (np.sum((y_pred_int - y_true_int)**2) + np.sum((y_pred_bnd - y_true_bnd)**2))
+        * p.vol_D / (p.Ntest ** p.d)
+    )
+    print()
+    print('#' * 20)
+    print(f'alpha: {alg_opts["alpha"]:.1e}')
+    print(f'L_inf error (boundary): {L_inf_bnd:.2e}')
+    print(f'L_inf error (interior): {L_inf_int:.2e}')
+    print(f'L_inf error (total): {max(L_inf_bnd, L_inf_int):.2e}')
+    print(f'L_2 error: {L_2:.2e}')
+    print('#' * 20)
+    print()
 
-date = datetime.datetime.now().strftime("%m%d_%H%M")
+    # Post-process alg_out
+    num_iter = len(alg_out['sk'])
+    max_supp = max([xk.shape[0] for xk in alg_out['xk']])
+
+    xk_padded = np.zeros((num_iter, max_supp, p.d))
+    sk_padded = np.zeros((num_iter, max_supp, p.dim - p.d))
+    ck_padded = np.zeros((num_iter, max_supp))
+
+    for i in range(num_iter):
+        xk_padded[i, :alg_out['xk'][i].shape[0]] = alg_out['xk'][i]
+        sk_padded[i, :alg_out['sk'][i].shape[0]] = alg_out['sk'][i]
+        ck_padded[i, :alg_out['ck'][i].shape[0]] = alg_out['ck'][i]
+
+    alg_out['xk'] = xk_padded
+    alg_out['sk'] = sk_padded
+    alg_out['ck'] = ck_padded
+
+    # Combine with options and errors
+    alg_out.update(alg_opts)
+    alg_out['error_all'] = np.array([L_inf_int, L_inf_bnd, L_2])
+
+    # Save output
+    if args.save_dir and args.save_idx is not None:
+        out_dir = f"output/{p.name}/{args.save_dir}/out_{args.save_idx}"
+        os.makedirs(out_dir, exist_ok=True)
+        np.savez(f"{out_dir}/out_{args.save_idx}_{alg_opts['alpha']:.0e}.npz", **alg_out)
+
+    return alg_out
 
 
-if args.save_dir is None:
-    if not os.path.exists(f"output/{p.name}"):
-        os.makedirs(f"output/{p.name}")
-    np.savez(f"output/{p.name}/out_{date}.npz", **alg_out)
-else:
-    if not os.path.exists(f"output/{args.save_dir}"):
-        os.makedirs(f"output/{args.save_dir}")
-    if args.save_idx is not None:
-        np.savez(f"output/{args.save_dir}/out_{args.save_idx}.npz", **alg_out)
-    else:
-        np.savez(f"output/{args.save_dir}/out_{date}.npz", **alg_out)
+
+alg_out = evaluate_and_save_solution(p, rhs, alg_opts, args)

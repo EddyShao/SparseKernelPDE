@@ -1,8 +1,6 @@
 from functools import partial
 import jax
 import jax.numpy as jnp
-jax.config.update("jax_enable_x64", False)
-# from .utils import shapeParser
 from .utils import shapeParser
 
 class GaussianKernel:
@@ -26,6 +24,7 @@ class GaussianKernel:
                 if sigma_max.shape != (d,):
                     raise ValueError("sigma_max must be a scalar or a vector of length d")
             self.sigma_max = sigma_max
+            print(self.sigma_max)
 
             sigma_min = jnp.array(sigma_min)
             if sigma_min.shape == ():
@@ -34,6 +33,7 @@ class GaussianKernel:
                 if sigma_min.shape != (d,):
                     raise ValueError("sigma_min must be a scalar or a vector of length d")
             self.sigma_min = sigma_min
+            print(self.sigma_min)
         
         else:
             assert type(sigma_max) == float or type(sigma_max) == int
@@ -126,25 +126,28 @@ class GaussianKernel:
     
     ############################################################
     ############################################################
-    
-    @partial(jax.jit, static_argnums=(0,))
-    def linear_results_X_c_Xhat(self, X, S, c, Xhat):
-        linear_results = {}
-        for key in self.linear.keys():
-            linear_results[key] = self.linear[key](X, S, c, Xhat)
-        return linear_results
 
     # We do the less automated way of computing PDE operators in the vectorized case
     # This is becasue we need to compute the linearized PDE operator at u, which is a function of the linearized PDE operator at u.
     # This is a bit tricky to do in a fully automated way.
-
+    
     @partial(jax.jit, static_argnums=(0,))
-    def linear_results_X_c_Xhat(self, X, S, c, Xhat):
+    def linear_E_results_X_c_Xhat(self, X, S, c, Xhat):
         linear_results = {}
-        for key in self.linear.keys():
-            linear_results[key] = self.linear[key](X, S, c, Xhat)
+        for key in self.linear_E.keys():
+            linear_results[key] = self.linear_E[key](X, S, c, Xhat)
         return linear_results
     
+    @partial(jax.jit, static_argnums=(0,))
+    def linear_B_results_X_c_Xhat(self, X, S, c, Xhat):
+        linear_results = {}
+        for key in self.linear_B.keys():
+            linear_results[key] = self.linear_B[key](X, S, c, Xhat)
+        return linear_results
+
+
+
+
     @partial(jax.jit, static_argnums=(0,))
     def E_gauss_X_c_Xhat(self, **linear_results):
         # return - linear_results['Lap'] + linear_results['Id'] ** 3

@@ -26,7 +26,6 @@ class Kernel(GaussianKernel):
             'Id': self.gauss_X_c_Xhat,
             'Lap': self.Lap_gauss_X_c_Xhat,
         }
-
         self.linear_B = {
             'Id': self.gauss_X_c_Xhat,
         }
@@ -87,12 +86,11 @@ class PDE:
         Initializes the problem setup for a neural network-based Laplacian solver.
         """
         # Problem parameters
-        self.name = 'SemiLinearPDE'
+        self.name = 'SemiLinear1D'
         self.sigma_min = alg_opt.get('sigma_min', 1e-3)
         self.sigma_max = alg_opt.get('sigma_max', 1.0)
 
-        self.d = 2  # spatial dimension
-        
+        self.d = 1  # spatial dimension
         
         self.scale = alg_opt.get('scale', 1.0) # Domain size
         self.seed = alg_opt.get('seed', 200)
@@ -101,7 +99,6 @@ class PDE:
 
         # domain for the input weights
         self.D = np.array([
-                [-1., 1.],
                 [-1., 1.],
         ])
 
@@ -121,14 +118,12 @@ class PDE:
 
         self.Omega = np.array([
             [-2.0, 2.0],
-            [-2.0, 2.0],
             [-10.0, 0.0],
         ])
         
         if self.anisotropic:
             self.Omega = np.vstack([self.Omega[:self.d, :], np.tile(self.Omega[self.d, :], (self.d, 1))])
 
-        assert self.dim == self.Omega.shape[0] and self.d == self.Omega.shape[1]
 
 
         self.u_zero = {"x": np.zeros((0, self.d)), "s": np.zeros((0, self.dim-self.d)),  "u": np.zeros((0))} # initial solution for anisotropic
@@ -144,25 +139,15 @@ class PDE:
         self.Nx = self.Nx_int + self.Nx_bnd
         # Optimization-related attributes
         self.obj = Objective(self.Nx_int, self.Nx_bnd, scale=self.scale)
-        
-        self.Ntest = 100
-        self.test_int, self.test_bnd = self.sample_obs(self.Ntest, method='grid')
+        self.Ntest = 200
 
-
+        self.test_int, self.test_bnd = self.sample_obs(self.Ntest)
     
     def f(self, x):
-        x = np.atleast_2d(x)  # Ensures x has shape (N, 2)
-        result = (2 * np.pi**2 * np.sin(np.pi * x[:, 0]) * np.sin(np.pi * x[:, 1]) + 
-                 16 * np.pi**2 * np.sin(2 * np.pi * x[:, 0]) * np.sin(2 * np.pi * x[:, 1]))
-        result += self.ex_sol(x) ** 3
-
-        return result if x.shape[0] > 1 else result[0]  # Return scalar if input was (2,)
+        pass
 
     def ex_sol(self, x):
-        x = np.atleast_2d(x)  # Ensures x has shape (N, 2)
-        result = (np.sin(np.pi * x[:, 0]) * np.sin(np.pi * x[:, 1]) +
-                2*np.sin(2*np.pi * x[:, 0]) * np.sin(2 * np.pi * x[:, 1]))
-        return result if x.shape[0] > 1 else result[0]  # Return scalar if input was (2,)
+        pass
 
     
     def sample_obs(self, Nobs, method='grid'):
@@ -170,8 +155,17 @@ class PDE:
         Samples observations from D
         method: 'uniform' or 'grid'
         """
-
-        obs_int, obs_bnd = sample_cube_obs(self.D, Nobs, method=method)
+        if method == 'grid':
+            obs_int = np.linspace(self.D[0, 0], self.D[0, 1], Nobs)[1:-1]
+            obs_int = obs_int.reshape(-1, 1)
+        elif method == 'uniform':
+            obs_int = self.D[0, 0] + (self.D[0, 1] - self.D[0, 0]) * np.random.rand(Nobs-2, 1)
+        else:
+            raise ValueError("Invalid method")
+        obs_bnd = np.array([
+            [1.],
+            [-1.],
+        ])
         return obs_int, obs_bnd
 
     def sample_param(self, Ntarget):
@@ -180,12 +174,15 @@ class PDE:
         """
         # randomx = self.Omega[0, 0] + (self.Omega[0, 1] - self.Omega[0, 0]) * np.random.rand(1, Ntarget)
         
-        randomx = self.Omega[:self.d, 0] + (self.Omega[:self.d, 1] - self.Omega[:self.d, 0]) * np.random.rand(Ntarget, self.d)
+        randomx = self.Omega[0, 0] + (self.Omega[:self.d, 1] - self.Omega[:self.d, 0]) * np.random.rand(Ntarget, self.d)
         randoms = self.Omega[-1, 0] + (self.Omega[self.d:, 1] - self.Omega[self.d:, 0]) * np.tile(np.random.rand(Ntarget)[:, None], (1, self.dim-self.d))
 
         return randomx, randoms
 
     def plot_forward(self, x, s, c):
+        """
+        Plots the forward solution.
+        """
         """
         Plots the forward solution.
         """
@@ -196,108 +193,30 @@ class PDE:
         plt.close('all')  # Close previous figure to prevent multiple windows
 
         # Create a new figure
-        fig = plt.figure(figsize=(15, 5))
-        ax1 = fig.add_subplot(131, projection='3d')
-        ax2 = fig.add_subplot(132, projection='3d')
-        ax3 = fig.add_subplot(133)
-        # Manually set figure position on screen
-        # try:
-        #     fig_manager = plt.get_current_fig_manager()
-        #     fig_manager.window.wm_geometry("+100+100")  # Move window to (100, 100)
-        # except:
-        #     pass  # Some backends (e.g., inline Jupyter) may not support this
-
-        # Generate grid
+        fig = plt.figure(figsize=(5, 5))
+        ax1 = fig.add_subplot(111)
         t_x = np.linspace(self.D[0, 0], self.D[0, 1], 100)
-        t_y = np.linspace(self.D[1, 0], self.D[1, 1], 100)
-        X, Y = np.meshgrid(t_x, t_y)
-        t = np.vstack((X.flatten(), Y.flatten())).T
+        # extend this to d-dimensions, by adding d - 1 zeros
+        t = np.zeros((100, self.d))
+        t[:, 0] = t_x
 
-        if self.ex_sol is not None:
-            f1 = self.ex_sol(t).reshape(X.shape)
+        f1 = self.ex_sol(t)
         # Plot exact solution
-        surf1 = ax1.plot_surface(X, Y, f1, cmap='viridis', edgecolor='none')
-        ax1.set_title("Exact Solution")
-        ax1.set_xlabel("X-axis")
-        ax1.set_ylabel("Y-axis")
-        fig.colorbar(surf1, ax=ax1, shrink=0.5, aspect=5)
 
+        ax1.plot(t_x, f1, label="Exact Solution")
+    
         # Compute predicted solution
         Gu = self.kernel.gauss_X_c_Xhat(x, s, c, t)
         # sigma is sigmoid of S
-        sigma = self.kernel.sigma(s)
-
-        # Plot predicted solution
-        surf2 = ax2.plot_surface(X, Y, Gu.reshape(X.shape), cmap='viridis', edgecolor='none')
-        ax2.set_title("Predicted Solution") 
-        ax2.set_xlabel("X-axis")
-        ax2.set_ylabel("Y-axis")
-        ax2.set_zlabel("$f_2(x, y)$")
-        fig.colorbar(surf2, ax=ax2, shrink=0.5, aspect=5)
-
-
+        ax1.plot(t_x, Gu, label="Predicted Solution")
+        sigma = self.kernel.sigma(s).flatten()
         # plot all collocation point X
         # together with error countour plot
-        contour = ax3.contourf(X, Y, np.abs(Gu.reshape(100, 100) - f1), cmap='viridis')        
-        ax3.scatter(x[:, 0].flatten(), x[:, 1].flatten(), color='r', marker='x')
-        if self.anisotropic:
-            for xi, yi, ai, bi in zip(x[:, 0].flatten(), x[:, 1].flatten(), sigma[:, 0].flatten(), sigma[:, 1].flatten()):
-                ellipse = patches.Ellipse((xi, yi), width=2*ai, height=2*bi,
-                              edgecolor='r', facecolor='none',
-                              linestyle='dashed', label="Reference ellipse")
-                ax3.add_patch(ellipse)
-        else:
-            for xi, yi, r in zip(x[:, 0].flatten(), x[:, 1].flatten(), sigma.flatten()):
-                circle = plt.Circle((xi, yi), r, color='r', fill=False, linestyle='dashed', label="Reference circle")
-                ax3.add_patch(circle)
 
-        ax3.set_aspect('equal')  # Ensures circles are properly shaped
-        # # set colorbars
-        ax3.set_xlim(self.Omega[0, 0], self.Omega[0, 1])
-        ax3.set_ylim(self.Omega[1, 0], self.Omega[1, 1])
-        ax3.set_title("Collocation Points, Error Contour") 
-        fig.colorbar(contour, ax=ax3, shrink=0.5, aspect=5)   
 
         plt.show(block=False)
         plt.pause(1.0)  
 
 
 
-# if __name__ == '__main__':
-#     # Define parameters
-#     sigma_min = 0.0001
-#     p = ProblemNNLapVar(sigma_min)
-#     print(p.dim)
-#     print(p.xhat.shape)
-#     print(p.xhat_int.shape)
-#     print(p.xhat_bnd.shape)
-#     print(p.u_zero['u'].shape)
-#     # sample_obs = p.sample_obs(10)
-#     # import matplotlib.pyplot as plt
-#     # fig, ax = plt.subplots()
-#     # ax.scatter(sample_obs[0][:, 0], sample_obs[0][:, 1])
-#     # ax.scatter(sample_obs[1][:, 0], sample_obs[1][:, 1])
-#     # plt.show()
-    
-
-
-#     # x = np.array([
-#     #     [0, .5, -.5],
-#     #     [0, .5, -.5],
-#     #     [1, 3., 10],
-#     # ])
-#     # t_1 = np.linspace(-1, 1, 100)
-#     # t_2 = np.linspace(-1, 1, 100)
-#     # # build the meshgrid
-#     # t1, t2 = np.meshgrid(t_1, t_2)
-#     # t = np.vstack((t1.flatten(), t2.flatten()))
-#     # k, dk, gauss = p.k(t, x)       
-#     # print(k.shape)
-#     # print(dk.shape)
-#     # print(gauss.shape)
-
-
-
-
-    
 

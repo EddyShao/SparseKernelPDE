@@ -1,7 +1,6 @@
 from pde.SemiLinearPDE import PDE
 # from src.solver import solve
 from src.solver_active import solve
-# from src.solver_first_order import solve
 
 
 import numpy as np
@@ -45,68 +44,9 @@ alg_opts = vars(args)
 
 print(alg_opts)
 
-# comment out if you want to use the smooth transition function
-def ex_sol_help(x, center=(0.30, 0.30), k=8, R_0=0.2):
-    x = np.atleast_2d(x)  # Ensures x has shape (N, 2)
-    R = np.sqrt((x[:, 0] - center[0])**2 + (x[:, 1] - center[1])**2)
-    return np.tanh(k * (R_0 - R)) + 1
-
-def f_help(x, center=(0.2, 0.30), k=8, R_0=0.2):
-    x = np.atleast_2d(x)  # Ensures x has shape (N, 2)
-    R = np.sqrt((x[:, 0] - center[0])**2 + (x[:, 1] - center[1])**2)
-    tanh_term = np.tanh(k * (R_0 - R))
-    tanh_sq = tanh_term**2
-    term_x = (-2 * k * (x[:, 0] - center[0])**2 * tanh_term / R**2) + ((x[:, 0] - center[0])**2 / R**3) - (1 / R)
-    term_y = (-2 * k * (x[:, 1] - center[1])**2 * tanh_term / R**2) + ((x[:, 1] - center[1])**2 / R**3) - (1 / R)
-    result = k * (tanh_sq - 1) * (term_x + term_y)
-    return result
-
-#########################################################
-############ Option 1: Easy function ####################
-#########################################################
-
-# the function is written as default in the SemiLinearPDE.py
-
-#########################################################
-### Option 2: Multi-scales Sharp-transition function ####
-#########################################################
-
-# R = 0.3
-# center = [0., 0.]
-# k = 10
-# def ex_sol(x):
-#    return ex_sol_help(x, center=center, k=k, R_0=R)
-
-# def f(x):
-#    return f_help(x, center=center, k=k, R_0=R) + ex_sol(x) ** 3
-
-
-#########################################################
-### Option 3: Multi-scales Sharp-transition function ####
-#########################################################
-
-# R_1 = 0.3
-# R_2 = 0.15
-# center_1 = [0.30, 0.30]
-# center_2 = [-0.30, -0.30]
-# k1 = 12
-# k2 = 4
-
-# def ex_sol(x):
-#     return ex_sol_help(x, center=center_1, k=k1, R_0=R_1) + ex_sol_help(x, center=center_2, k=k2, R_0=R_2)
-
-
-# def f(x):
-#     return f_help(x, center=center_1, k=k1, R_0=R_1) + f_help(x, center=center_2, k=k2, R_0=R_2) + ex_sol(x) ** 3
-
-
 
 p = PDE(alg_opts)
-
-# p.f = f
-# p.ex_sol = ex_sol
-
-
+p.name = 'SemiLinearSines'
 rhs = p.f(p.xhat)
 
 # optional: add noise to the rhs
@@ -118,6 +58,26 @@ rhs[-p.Nx_bnd:] = p.ex_sol(p.xhat_bnd)
 
 
 alg_out = solve(p, rhs, alg_opts)
+
+#### test L_inf and L_2 error again ####
+
+u_pred = lambda xhat_vec: p.kernel.gauss_X_c_Xhat(alg_out['xk'][-1], alg_out['sk'][-1], alg_out['ck'][-1], xhat_vec)
+
+y_pred_bnd = u_pred(p.test_bnd)
+y_true_bnd = p.ex_sol(p.test_bnd)
+y_pred_int = u_pred(p.test_int)
+y_true_int = p.ex_sol(p.test_int)
+L_inf_bnd = np.max(np.abs(y_pred_bnd - y_true_bnd))
+L_inf_int = np.max(np.abs(y_pred_int - y_true_int))
+
+L_2 = np.sqrt((np.sum((y_pred_int - y_true_int)**2) + np.sum((y_pred_bnd - y_true_bnd)**2)) * p.vol_D / (p.Ntest **p.d))
+
+print('#' * 20)
+print(f'L_inf error (boundary): {L_inf_bnd:.2e}')
+print(f'L_inf error (interior): {L_inf_int:.2e}')
+print(f'L_inf error (total): {max(L_inf_bnd, L_inf_int):.2e}')
+print(f'L_2 error: {L_2:.2e}')
+print('#' * 20)
 
 # post-processing alg_out
 
@@ -140,17 +100,12 @@ alg_out['ck'] = ck_padded
 # combine alg_out with alg_opts
 alg_out.update(alg_opts)
 
+alg_out['error_all'] = np.array([L_inf_int, L_inf_bnd, L_2]) 
+
 date = datetime.datetime.now().strftime("%m%d_%H%M")
 
 
-if args.save_dir is None:
-    if not os.path.exists(f"output/{p.name}"):
-        os.makedirs(f"output/{p.name}")
-    np.savez(f"output/{p.name}/out_{date}.npz", **alg_out)
-else:
-    if not os.path.exists(f"output/{args.save_dir}"):
-        os.makedirs(f"output/{args.save_dir}")
-    if args.save_idx is not None:
-        np.savez(f"output/{args.save_dir}/out_{args.save_idx}.npz", **alg_out)
-    else:
-        np.savez(f"output/{args.save_dir}/out_{date}.npz", **alg_out)
+if args.save_dir and args.save_idx:
+        if not os.path.exists(f"output/{p.name}/{args.save_dir}"):
+            os.makedirs(f"output/{p.name}/{args.save_dir}")
+        np.savez(f"output/{p.name}/{args.save_dir}/out_{args.save_idx}.npz", **alg_out)

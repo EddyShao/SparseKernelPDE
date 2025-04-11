@@ -54,59 +54,44 @@ class Objective:
     def ddF(self, y):
         """Computes the Hessian (second derivative) of F(y)."""
         return np.diag(self.p_vec.flatten())
-
-def sample_int_obs(D, Nobs, method='grid', eps=1e-5):
-    if method == 'uniform':
-        # obs = []
-        # for i in range(D.shape[0]):  # Iterate over each dimension
-        #     lower, upper = D[i, 0], D[i, 1]
-        #     obs.append(np.random.uniform(lower + eps, upper - eps, Nobs-2))  # Avoid boundaries
-        # obs = np.vstack(obs).T  # Stack into a (Nobs, dim) array
-        obs = D[:, 0] + (D[:, 1] - D[:, 0]) * np.random.rand((Nobs-2)**2, D.shape[0])
-    elif method == 'grid':
+    
+def sample_cube_obs(D, Nobs, method='grid'):
+    d = D.shape[0]
+    if method == 'grid':
         obs = []
-        for i in range(D.shape[0]):
-            obs.append(np.linspace(D[i, 0], D[i, 1], Nobs)[1:-1])  # Exclude boundaries
+        for i in range(d):
+            obs.append(np.linspace(D[i, 0], D[i, 1], Nobs))  # Exclude boundaries
         obs = np.meshgrid(*obs, indexing='ij')
-        obs = np.vstack([obs[i].flatten() for i in range(len(D))]).T
-    else:
-        raise ValueError("Unsupported sampling method")
-    
-    return obs
+        obs = np.vstack([obs[i].flatten() for i in range(d)]).T
 
-def sample_bnd_obs(D, Nobs, method='grid'):
-    """
-    Samples observations from boundary of D. Note that this samples from all boundaries.
-    Specific implmentations for different boundary conditions.
-    """
-    if method == 'uniform':
+        mask = np.any(np.isclose(obs, D[:, 0]) | np.isclose(obs, D[:, 1]), axis=1)
+        obs_int = obs[~mask]
+        obs_bnd = obs[mask]
+
+    elif method == 'uniform':
+        obs_int  = D[:, 0] + (D[:, 1] - D[:, 0]) * np.random.rand((Nobs-2)**d, D.shape[0])
         obs = []
+        d = D.shape[0]
+        N_per_side = (Nobs ** d - (Nobs-2) ** d) // (2 * d) + 1
+
         for i in range(D.shape[0]):
-            side1 = np.full((Nobs-1, D.shape[0]), D[i, 0])
-            side2 = np.full((Nobs-1, D.shape[0]), D[i, 1])
-            side1[:, i] = np.random.uniform(D[i, 0], D[i, 1], Nobs-1)
-            side2[:, i] = np.random.uniform(D[i, 0], D[i, 1], Nobs-1)
-            obs.append(side1)
-            obs.append(side2)
-        obs = np.vstack(obs)
-    elif method == 'grid':
-        obs = []
-        for i in range(D.shape[0]):
-            side1 = np.full((Nobs-1, D.shape[0]), D[i, 0])
-            side2 = np.full((Nobs-1, D.shape[0]), D[i, 1])
-            if i%2 == 0:
-                side1[:, i] = np.linspace(D[i, 0], D[i, 1], Nobs)[1:]
-                side2[:, i] = np.linspace(D[i, 0], D[i, 1], Nobs)[:-1]
-            else:
-                side1[:, i] = np.linspace(D[i, 0], D[i, 1], Nobs)[:-1]
-                side2[:, i] = np.linspace(D[i, 0], D[i, 1], Nobs)[1:]
-            obs.append(side1)
-            obs.append(side2)
-        obs = np.vstack(obs)
+            face1 = np.full((N_per_side, D.shape[0]), D[i, 0])
+            face2 = np.full((N_per_side, D.shape[0]), D[i, 1])
+            mask = np.arange(D.shape[0]) != i
+            # D[mask, 0] and D[mask, 1] have shape (d-1,)
+            # We add a new axis so that they broadcast to shape (N_per_side, d-1)
+            low = D[mask, 0][np.newaxis, :]
+            high = D[mask, 1][np.newaxis, :]
+            face1[:, mask] = np.random.uniform(low=low, high=high, size=(N_per_side, d-1))
+            face2[:, mask] = np.random.uniform(low=low, high=high, size=(N_per_side, d-1))
+            obs.append(face1)
+            obs.append(face2)
+        obs_bnd = np.vstack(obs)
+
     else:
         raise ValueError("Unsupported sampling method")
     
-    return obs
+    return obs_int, obs_bnd
 
 
 
@@ -193,7 +178,8 @@ def shapeParser(func, pad=False):
             elif output.ndim == 1:
                 return output
             else:
-                output_sliced = output
+                # output_sliced = output
+                output_sliced = slice_arr(output)
 
             return output_sliced
     return wrapper
@@ -205,30 +191,32 @@ if __name__ == '__main__':
     D = np.array([
         [0., 1.],
         [0., 1.],
+        [0., 1.],
     ])
 
     Nobs = 20
 
-    obs_int_grid = sample_int_obs(D, Nobs, method='grid')
-    obs_bnd_grid = sample_bnd_obs(D, Nobs, method='grid')
+    obs_int_grid, obs_bnd_grid = sample_cube_obs(D, Nobs, method='grid')
+    obs_int_uniform, obs_bnd_uniform = sample_cube_obs(D, Nobs, method='uniform')
 
-    obs_int_uniform = sample_int_obs(D, Nobs, method='uniform')
-    obs_bnd_uniform = sample_bnd_obs(D, Nobs, method='uniform')
+    print(obs_int_grid.shape, obs_bnd_grid.shape)
+    print(obs_int_uniform.shape, obs_bnd_uniform.shape)
 
-    import matplotlib.pyplot as plt
 
-    plt.figure(figsize=(12, 6))
-    fig, axs = plt.subplots(1, 2, figsize=(12, 6))
-    axs[0].scatter(obs_int_grid[:, 0], obs_int_grid[:, 1], label='Grid Sampling')
-    axs[0].scatter(obs_bnd_grid[:, 0], obs_bnd_grid[:, 1], label='Grid Sampling')
+    # import matplotlib.pyplot as plt
 
-    axs[1].scatter(obs_int_uniform[:, 0], obs_int_uniform[:, 1], label='Uniform Sampling')
-    axs[1].scatter(obs_bnd_uniform[:, 0], obs_bnd_uniform[:, 1], label='Uniform Sampling')
-    plt.suptitle('Sampling Observations')
-    axs[0].set_title('Interior Observations')
-    axs[1].set_title('Boundary Observations')
+    # plt.figure(figsize=(12, 6))
+    # fig, axs = plt.subplots(1, 2, figsize=(12, 6))
+    # axs[0].scatter(obs_int_grid[:, 0], obs_int_grid[:, 1], label='Grid Sampling')
+    # axs[0].scatter(obs_bnd_grid[:, 0], obs_bnd_grid[:, 1], label='Grid Sampling')
+
+    # axs[1].scatter(obs_int_uniform[:, 0], obs_int_uniform[:, 1], label='Uniform Sampling')
+    # axs[1].scatter(obs_bnd_uniform[:, 0], obs_bnd_uniform[:, 1], label='Uniform Sampling')
+    # plt.suptitle('Sampling Observations')
+    # axs[0].set_title('Interior Observations')
+    # axs[1].set_title('Boundary Observations')
     
-    plt.title('Grid Sampling')
-    plt.legend()
-    plt.show()
+    # plt.title('Grid Sampling')
+    # plt.legend()
+    # plt.show()
 
