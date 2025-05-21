@@ -9,7 +9,7 @@ from src.utils import Objective, shapeParser, sample_cube_obs
 import jax
 import jax.numpy as jnp
 from functools import partial
-jax.config.update("jax_enable_x64", False)
+jax.config.update("jax_enable_x64", True)
 
 # set the random seed
 

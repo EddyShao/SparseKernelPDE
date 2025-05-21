@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 from functools import partial
 from .utils import computeProx, Phi
+import jax.numpy as jnp
+import jax
 
 Prox = lambda v: computeProx(v, mu=1)
 
@@ -58,32 +60,32 @@ def solve(p, y_ref, alg_opts):
     phi = Phi(gamma)
 
 
-    linear_results_int = p.kernel.linear_results_X_c_Xhat(uk['x'], uk['s'], uk['u'], p.xhat_int)
-    linear_results_bnd = p.kernel.linear_results_X_c_Xhat(uk['x'], uk['s'], uk['u'], p.xhat_bnd)
+    linear_results_int = p.kernel.linear_E_results_X_c_Xhat(uk['x'], uk['s'], uk['u'], p.xhat_int)
+    linear_results_bnd = p.kernel.linear_B_results_X_c_Xhat(uk['x'], uk['s'], uk['u'], p.xhat_bnd)
 
 
     yk_int = p.kernel.E_gauss_X_c_Xhat(**linear_results_int)
     yk_bnd = p.kernel.B_gauss_X_c_Xhat(**linear_results_bnd)
-    yk = np.hstack([yk_int, yk_bnd])
+    yk = jnp.hstack([yk_int, yk_bnd])
 
     # norms_c = computeNorm(uk['u'], N)
-    norms_c = np.abs(uk['u'])
+    norms_c = jnp.abs(uk['u'])
 
     # Compute the objective function value
     misfit = yk - y_ref
-    j = obj.F(misfit)/alpha + np.sum(phi.phi(norms_c))
+    j = obj.F(misfit)/alpha + jnp.sum(phi.phi(norms_c))
 
     y_pred_int = p.kernel.gauss_X_c_Xhat(uk['x'], uk['s'], uk['u'], p.test_int)
     y_pred_bnd = p.kernel.gauss_X_c_Xhat(uk['x'], uk['s'], uk['u'], p.test_bnd)
     y_true_int = p.ex_sol(p.test_int)
     y_true_bnd = p.ex_sol(p.test_bnd)
-    l2_error = np.sqrt((np.sum((y_pred_int - y_true_int)**2) + np.sum((y_pred_bnd - y_true_bnd)**2)) * p.vol_D / (100 * 100))
-    l_inf_error_int = np.max(np.abs(y_pred_int - y_true_int))
-    l_inf_error_bnd = np.max(np.abs(y_pred_bnd - y_true_bnd))
+    l2_error = jnp.sqrt((jnp.sum((y_pred_int - y_true_int)**2) + jnp.sum((y_pred_bnd - y_true_bnd)**2)) * p.vol_D / (100 * 100))
+    l_inf_error_int = jnp.max(jnp.abs(y_pred_int - y_true_int))
+    l_inf_error_bnd = jnp.max(jnp.abs(y_pred_bnd - y_true_bnd))
     l_inf_error = max(l_inf_error_int, l_inf_error_bnd)
 
     
-    suppsize = np.count_nonzero(norms_c) # support size
+    suppsize = jnp.count_nonzero(norms_c) # support size
 
     ck = uk['u'] # outer weights
     xk = uk['x'] # inner weights - collocation points
@@ -111,16 +113,16 @@ def solve(p, y_ref, alg_opts):
     
 
     # change to robinson variale
-    qk = np.sign(ck) + ck  
+    qk = jnp.sign(ck) + ck  
     # check consistency of Robinson variable
-    assert ck.size == 0 or np.linalg.norm(ck - Prox(qk), ord=np.inf) < 1e-14 
+    assert ck.size == 0 or jnp.linalg.norm(ck - Prox(qk), ord=jnp.inf) < 1e-14 
 
     # Update ck (actually there's no update)
     ck = Prox(qk)
 
     # Define function equivalents
-    Dphima = lambda c: (phi.dphi(np.abs(c)) - 1) * np.sign(c) # gradient of modified phi
-    DDphima = lambda c: phi.ddphi(np.abs(c)) # hessian of modified phi
+    Dphima = lambda c: (phi.dphi(jnp.abs(c)) - 1) * jnp.sign(c) # gradient of modified phi
+    DDphima = lambda c: phi.ddphi(jnp.abs(c)) # hessian of modified phi
 
 
     theta_old = 1. ###### QUESTION ###### 
@@ -136,34 +138,38 @@ def solve(p, y_ref, alg_opts):
         Dc_E_gauss, Dx_E_gauss, Ds_E_gauss = Grad_E['grad_c'], Grad_E['grad_X'], Grad_E['grad_S']
         Dc_B_gauss, Dx_B_gauss, Ds_B_gauss = Grad_B['grad_c'], Grad_B['grad_X'], Grad_B['grad_S']
 
-        Gp_c = np.vstack([np.array(Dc_E_gauss), np.array(Dc_B_gauss)])
-        Gp_x = np.vstack([np.array(Dx_E_gauss), np.array(Dx_B_gauss)])
-        Gp_s = np.vstack([np.array(Ds_E_gauss), np.array(Ds_B_gauss)])
+        # Gp_c = np.vstack([np.array(Dc_E_gauss), np.array(Dc_B_gauss)])
+        # Gp_x = np.vstack([np.array(Dx_E_gauss), np.array(Dx_B_gauss)])
+        # Gp_s = np.vstack([np.array(Ds_E_gauss), np.array(Ds_B_gauss)])
+
+        Gp_c = jnp.vstack([Dc_E_gauss, Dc_B_gauss])
+        Gp_x = jnp.vstack([Dx_E_gauss, Dx_B_gauss])
+        Gp_s = jnp.vstack([Ds_E_gauss, Ds_B_gauss])
 
         if Gp_s.ndim == 2:
             Gp_s = Gp_s[:, :, None]
-        Gp_xs = np.dstack([Gp_x, Gp_s])
+        Gp_xs = jnp.dstack([Gp_x, Gp_s])
 
-        Gp = np.hstack([Gp_c, shape_dK(Gp_xs)])
+        Gp = jnp.hstack([Gp_c, shape_dK(Gp_xs)])
 
         R = (1 / alpha) * (Gp.T @ obj.dF(misfit)) + \
-            np.concatenate([
+            jnp.concatenate([
             Dphima(ck).reshape(-1, 1) + (qk - ck).reshape(-1, 1), 
-            np.zeros((len(ck) * dim, 1))
+            jnp.zeros((len(ck) * dim, 1))
         ]) # gradient with respect to qk, xk, and s respectively
 
         SI = obj.ddF(misfit)
         II = Gp.T @ SI @ Gp # Approximate Hessian 
 
 
-        kpp = 0.1 * np.linalg.norm(obj.dF(misfit), 1) * np.reshape(
-            np.sqrt(np.finfo(float).eps) + np.outer(np.ones(dim), np.abs(ck.reshape(1, -1))), -1
+        kpp = 0.1 * jnp.linalg.norm(obj.dF(misfit), 1) * jnp.reshape(
+            jnp.sqrt(jnp.finfo(float).eps) + jnp.outer(jnp.ones(dim), jnp.abs(ck.reshape(1, -1))), -1
         )
 
 
-        Icor = np.block([
-            [np.zeros((len(ck), len(ck))), np.zeros((len(ck), dim * len(ck)))],
-            [np.zeros((dim * len(ck), len(ck))), np.diag(kpp)]
+        Icor = jnp.block([
+            [jnp.zeros((len(ck), len(ck))), jnp.zeros((len(ck), dim * len(ck)))],
+            [jnp.zeros((dim * len(ck), len(ck))), jnp.diag(kpp)]
         ])
 
 
@@ -172,29 +178,30 @@ def solve(p, y_ref, alg_opts):
 
         # THIS IS TOO UGLY, NEET TO CHANGE
 
-        DP = np.diag(
-            np.concatenate([
-                (np.abs(qk.T) >= 1).reshape(-1, 1),
-                (np.ones((dim, 1)) @ (np.abs(ck) > 0).reshape(1, -1)).reshape(-1, 1)
+        DP = jnp.diag(
+            jnp.concatenate([
+                (jnp.abs(qk.T) >= 1).reshape(-1, 1),
+                (jnp.ones((dim, 1)) @ (jnp.abs(ck) > 0).reshape(1, -1)).reshape(-1, 1)
             ]).flatten()
         )
 
 
-        DDphi = np.zeros(((1 + dim) * len(ck), (1 + dim) * len(ck)))
-        DDphi[:len(ck), :len(ck)] = np.diag(DDphima(ck))
+        DDphi = jnp.zeros(((1 + dim) * len(ck), (1 + dim) * len(ck)))
+        # DDphi[:len(ck), :len(ck)] = jnp.diag(DDphima(ck))
+        DDphi.at[:len(ck), :len(ck)].set(jnp.diag(DDphima(ck)))
 
 
         try:
-            DR = HH @ DP + DDphi @ DP + (np.eye((1 + dim) * len(ck)) - DP)
-            dz = - np.linalg.solve(DR, R)
+            DR = HH @ DP + DDphi @ DP + (jnp.eye((1 + dim) * len(ck)) - DP)
+            dz = - jnp.linalg.solve(DR, R)
             dz = dz.flatten()
-        except np.linalg.LinAlgError:
+        except jnp.linalg.LinAlgError:
             try:
-                DR = HH @ DP + (np.eye((1 + dim) * len(ck)) - DP)
-                dz = - np.linalg.solve(DR, R)
+                DR = HH @ DP + (jnp.eye((1 + dim) * len(ck)) - DP)
+                dz = - jnp.linalg.solve(DR, R)
                 dz = dz.flatten()
                 
-            except np.linalg.LinAlgError:
+            except jnp.linalg.LinAlgError:
                 print("WARNING: Singular matrix encountered.")
                 alg_out["success"] = False
                 break
@@ -223,14 +230,14 @@ def solve(p, y_ref, alg_opts):
             ck = Prox(qk)
 
             # yk = p.kernel.gauss_X_c_Xhat(xk, sk, ck, p.xhat)
-            linear_results_int = p.kernel.linear_results_X_c_Xhat(xk, sk, ck, p.xhat_int)
-            linear_results_bnd = p.kernel.linear_results_X_c_Xhat(xk, sk, ck, p.xhat_bnd)
+            linear_results_int = p.kernel.linear_E_results_X_c_Xhat(xk, sk, ck, p.xhat_int)
+            linear_results_bnd = p.kernel.linear_B_results_X_c_Xhat(xk, sk, ck, p.xhat_bnd)
             yk_int = p.kernel.E_gauss_X_c_Xhat(**linear_results_int)
             yk_bnd = p.kernel.B_gauss_X_c_Xhat(**linear_results_bnd)
-            yk = np.hstack([yk_int, yk_bnd])
+            yk = jnp.hstack([yk_int, yk_bnd])
             misfit = yk - y_ref
-            norms_c = np.abs(ck)
-            j = obj.F(misfit) / alpha + np.sum(phi.phi(norms_c))
+            norms_c = jnp.abs(ck)
+            j = obj.F(misfit) / alpha + jnp.sum(phi.phi(norms_c))
             descent = j - jold
             pred = theta * (R.T @ (DP @ dz.reshape(-1, 1))) # estimate of the descent
             
@@ -251,29 +258,30 @@ def solve(p, y_ref, alg_opts):
 
 
         # Active set
-        suppc = (np.abs(qk) > 1).flatten()
+        suppc = (jnp.abs(qk) > 1).flatten()
 
         # Constraint violation: Generate search grid
         # Sample Candidate Diracs
 
-        omegas_new_x, omegas_new_s = p.sample_param(Ntrial + blocksize)
+        # omegas_new_x, omegas_new_s = p.sample_param(Ntrial + blocksize)
 
-        if k > 1:
-            omegas_x = np.vstack([omegas_x[ind_max_sh_eta:ind_max_sh_eta+1, :], omegas_new_x])
-            omegas_s = np.vstack([omegas_s[ind_max_sh_eta:ind_max_sh_eta+1, :], omegas_new_s])
-        else:
-            omegas_x = omegas_new_x
-            omegas_s = omegas_new_s
+        # if k > 1:
+        #     omegas_x = np.vstack([omegas_x[ind_max_sh_eta:ind_max_sh_eta+1, :], omegas_new_x])
+        #     omegas_s = np.vstack([omegas_s[ind_max_sh_eta:ind_max_sh_eta+1, :], omegas_new_s])
+        # else:
+        #     omegas_x = omegas_new_x
+        #     omegas_s = omegas_new_s
 
-        if k > 1:
-            K_test_int = p.kernel.DE_gauss_X_Xhat(omegas_x, omegas_s, p.xhat_int, **linear_results_int)
-            K_test_bnd = p.kernel.DB_gauss_X_Xhat(omegas_x, omegas_s, p.xhat_bnd, **linear_results_bnd)
+        omegas_x, omegas_s = p.sample_param(Ntrial)
 
-            K_test = np.vstack([K_test_int, K_test_bnd])
+        K_test_int = p.kernel.DE_gauss_X_Xhat(omegas_x, omegas_s, p.xhat_int, **linear_results_int)
+        K_test_bnd = p.kernel.DB_gauss_X_Xhat(omegas_x, omegas_s, p.xhat_bnd, **linear_results_bnd)
+
+        K_test = jnp.vstack([K_test_int, K_test_bnd])
 
         eta = (1 / alpha) * K_test.T @ obj.dF(misfit) 
-        sh_eta = np.abs(Prox(eta)).flatten()
-        sh_eta, sorted_ind = np.sort(sh_eta)[::-1], np.argsort(-sh_eta) 
+        sh_eta = jnp.abs(Prox(eta)).flatten()
+        sh_eta, sorted_ind = jnp.sort(sh_eta)[::-1], jnp.argsort(-sh_eta) 
         max_sh_eta, ind_max_sh_eta = sh_eta[0], sorted_ind[0]
     
         # # Compute l2 and l_inf errors
@@ -289,13 +297,13 @@ def solve(p, y_ref, alg_opts):
             # Compute l2 and l_inf errors
             y_pred_int = p.kernel.gauss_X_c_Xhat(xk, sk, ck, p.test_int)
             y_pred_bnd = p.kernel.gauss_X_c_Xhat(xk, sk, ck, p.test_bnd)
-            l2_error = np.sqrt((np.sum((y_pred_int - y_true_int)**2) + np.sum((y_pred_bnd - y_true_bnd)**2)) * p.vol_D / ((p.test_int.shape[0] + p.test_bnd.shape[0])**p.d))
-            l_inf_error_int = np.max(np.abs(y_pred_int - y_true_int))
-            l_inf_error_bnd = np.max(np.abs(y_pred_bnd - y_true_bnd))
+            l2_error = jnp.sqrt((jnp.sum((y_pred_int - y_true_int)**2) + jnp.sum((y_pred_bnd - y_true_bnd)**2)) * p.vol_D / ((p.test_int.shape[0] + p.test_bnd.shape[0])**p.d))
+            l_inf_error_int = jnp.max(jnp.abs(y_pred_int - y_true_int))
+            l_inf_error_bnd = jnp.max(jnp.abs(y_pred_bnd - y_true_bnd))
             l_inf_error = max(l_inf_error_int, l_inf_error_bnd)
 
-            print(f"Time: {time.time() - start_time:.2f}s CGNAP iter: {k}, j={j:.6f}, supp=({Nc}->{np.sum(suppc)}), "
-                f"desc={descent:.1e}, dz={np.linalg.norm(dz, np.inf):.1e}, "
+            print(f"Time: {time.time() - start_time:.2f}s CGNAP iter: {k}, j={j:.6f}, supp=({Nc}->{jnp.sum(suppc)}), "
+                f"desc={descent:.1e}, dz={jnp.linalg.norm(dz, jnp.inf):.1e}, "
                 f"viol={max_sh_eta:.1e}, theta={theta:.1e}")
 
             
@@ -315,8 +323,8 @@ def solve(p, y_ref, alg_opts):
 
 
         # Prune zero coefficient Diracs
-        if np.any(~suppc):
-            Nc = np.sum(suppc)
+        if jnp.any(~suppc):
+            Nc = jnp.sum(suppc)
             qk = qk[suppc]
             xk = xk[suppc, :]
             if sk.ndim == 1:
@@ -335,9 +343,9 @@ def solve(p, y_ref, alg_opts):
 
         grad_supp_c = (1 / alpha) * (Gp_c.T @ obj.dF(misfit)) + Dphima(ck).reshape(-1, 1) + (qk - ck).reshape(-1, 1)
 
-        tresh_c = np.abs(grad_supp_c).T
+        tresh_c = jnp.abs(grad_supp_c).T
         grad_supp_y = (1 / alpha) * shape_dK(Gp_xs).T @ obj.dF(misfit)
-        tresh_y = np.sqrt(np.sum(grad_supp_y.reshape(dim, -1) ** 2, axis=0))
+        tresh_y = jnp.sqrt(jnp.sum(grad_supp_y.reshape(dim, -1) ** 2, axis=0))
 
         # tresh = tresh_c + 0.01 * tresh_y # We need to change this.
         tresh = tresh_c +  insertion_coef * tresh_y
@@ -348,19 +356,22 @@ def solve(p, y_ref, alg_opts):
 
         # if max_sh_eta > insertion_coef * np.linalg.norm(tresh, ord=np.inf):
         # doing MCMC here
-        annealing = - 3 * np.log10(alpha) * np.max(np.abs(misfit)) / np.max(np.abs(y_ref))
-        if np.random.rand() < np.exp(-(np.linalg.norm(tresh, ord=np.inf) - max_sh_eta) / (T * annealing**2 + 1e-5)):
+        annealing = - 3 * jnp.log10(alpha) * jnp.max(jnp.abs(misfit)) / jnp.max(jnp.abs(y_ref))
+        key = jax.random.PRNGKey(0)  # You should thread the key in practice
+        key, subkey = jax.random.split(key)
+        rand_val = jax.random.uniform(subkey)
+        if rand_val < jnp.exp(-(jnp.linalg.norm(tresh, ord=jnp.inf) - max_sh_eta) / (T * annealing**2 + 1e-5)):
             Nc += 1
-            qk = np.hstack([qk, -np.sign(eta[ind_max_sh_eta]).flatten()])
-            ck = np.hstack([ck, np.zeros((1))])
-            xk = np.vstack([xk, omegas_x[ind_max_sh_eta, :]])
+            qk = jnp.hstack([qk, -jnp.sign(eta[ind_max_sh_eta]).flatten()])
+            ck = jnp.hstack([ck, jnp.zeros((1))])
+            xk = jnp.vstack([xk, omegas_x[ind_max_sh_eta, :]])
             if sk.ndim == 1:
-                sk = np.hstack([sk, omegas_s[ind_max_sh_eta]])
+                sk = jnp.hstack([sk, omegas_s[ind_max_sh_eta]])
             else:
-                sk = np.vstack([sk, omegas_s[ind_max_sh_eta, :]])
+                sk = jnp.vstack([sk, omegas_s[ind_max_sh_eta, :]])
 
-            print(f"  INSERT: viol={max_sh_eta:.2e}, |g_c|+|g_y|={np.max(tresh_c, initial=0):.1e}+{np.max(tresh_y, initial=0):.1e}, "
-                f"supp:({np.sum(suppc)}->{Nc})")
+            print(f"  INSERT: viol={max_sh_eta:.2e}, |g_c|+|g_y|={jnp.max(tresh_c, initial=0):.1e}+{jnp.max(tresh_y, initial=0):.1e}, "
+                f"supp:({jnp.sum(suppc)}->{Nc})")
 
             # if Ncblck < blocksize:
             #     blcki = np.append(blcki, Nc-1)
@@ -380,9 +391,9 @@ def solve(p, y_ref, alg_opts):
 
         # Stopping criterion
         
-        if np.abs(pred) < (TOL / alpha) and  max_sh_eta < (TOL / alpha):
-            dz_norm = np.linalg.norm(dz, np.inf) if dz.size > 0 else 0.0  
-            print(f"CGNAP iter: {k}, j={j:.6f}, supp=({Nc}->{np.sum(suppc)}), "
+        if jnp.abs(pred) < (TOL / alpha) and  max_sh_eta < (TOL / alpha):
+            dz_norm = jnp.linalg.norm(dz, jnp.inf) if dz.size > 0 else 0.0  
+            print(f"CGNAP iter: {k}, j={j:.6f}, supp=({Nc}->{jnp.sum(suppc)}), "
                 f"desc={descent:.1e}, dz={dz_norm:.1e}, "
                 f"viol={max_sh_eta:.1e}, theta={theta:.1e}")
             

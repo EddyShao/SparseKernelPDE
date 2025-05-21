@@ -8,6 +8,7 @@ from src.GaussianKernel import GaussianKernel
 from src.utils import Objective, shapeParser, sample_cube_obs
 import jax
 import jax.numpy as jnp
+from jax import lax
 from functools import partial
 jax.config.update("jax_enable_x64", True)
 
@@ -29,6 +30,7 @@ class Kernel(GaussianKernel):
 
         self.linear_B = {
             'Id': self.gauss_X_c_Xhat,
+            'nabla_n':self.nabla_n_gauss_X_c_Xhat,
         }
 
         # linear results required for computing linearized E and B
@@ -52,6 +54,37 @@ class Kernel(GaussianKernel):
     @partial(jax.jit, static_argnums=(0, 1))
     def Lap_gauss_X_c_Xhat(self, X_shape, X, S, c, Xhat): 
         return jax.vmap(self.Lap_gauss_X_c, in_axes=(None, None, None, 0))(X, S, c, Xhat)
+    
+    @shapeParser
+    @partial(jax.jit, static_argnums=(0, 1))
+    def nabla_n_gauss_X_c(self, X_shape, X, S, c, xhat):
+        # Compute the gradient of B_gauss_X_c with respect to xhat
+        nabla = jax.grad(self.gauss_X_c, argnums=3)(X, S, c, xhat)
+
+        # Determine if xhat is on the boundary in the first coordinate (axis 0)
+        # and in the second coordinate (axis 1)
+        # (Assuming you know the boundary is at some predefined value, say +/- L)
+        # You can adjust the tolerance as needed
+        tol = 1e-6
+        is_boundary_first = jnp.any(jnp.isclose(xhat[0], jnp.array(self.D[0, :]), atol=tol))
+
+        # Define direction based on which axis is on the boundary
+        # Default direction is (0, 1) if on first coordinate boundary
+        # Otherwise (1, 0) if on second coordinate boundary
+        direction = lax.cond(
+            is_boundary_first,
+            lambda _: jnp.array([0.0, 1.0]),
+            lambda _: jnp.array([1.0, 0.0]),
+            operand=None
+        )
+
+        return jnp.dot(nabla, direction)
+    
+    @partial(shapeParser, pad=True)
+    @partial(jax.jit, static_argnums=(0, 1))
+    def nabla_n_gauss_X_c_Xhat(self, X_shape, X, S, c, Xhat):
+        return jax.vmap(self.nabla_n_gauss_X_c, in_axes=(None, None, None, 0))(X, S, c, Xhat)
+    
 
     @shapeParser
     @partial(jax.jit, static_argnums=(0, 1))
@@ -63,6 +96,10 @@ class Kernel(GaussianKernel):
     def B_gauss_X_c(self, X_shape, X, S, c, xhat):
         return self.gauss_X_c(X, S, c, xhat)
     
+    @shapeParser
+    @partial(jax.jit, static_argnums=(0, 1))
+    def B_aux_gauss_X_c(self, X_shape, X, S, c, xhat):
+        return self.nabla_n_gauss_X_c(X, S, c, xhat)
 
     @partial(jax.jit, static_argnums=(0,))
     def E_gauss_X_c_Xhat(self, **linear_results):
@@ -73,12 +110,60 @@ class Kernel(GaussianKernel):
         return linear_results['Id']
     
     @partial(jax.jit, static_argnums=(0,))
+    def B_aux_gauss_X_c_Xhat(self, **linear_results):
+        return linear_results['nabla_n']
+    
+    @shapeParser
+    @partial(jax.jit, static_argnums=(0, 1))
+    def Grad_B_aux_gauss_X_c(self, X_shape, X, S, c, xhat):
+        grads = jax.grad(self.B_aux_gauss_X_c, argnums=(0, 1, 2))(X, S, c, xhat)
+        return {'grad_X': grads[0], 'grad_S': grads[1], 'grad_c': grads[2]}
+    
+    @partial(shapeParser, pad=True)
+    @partial(jax.jit, static_argnums=(0, 1))
+    def Grad_B_aux_gauss_X_c_Xhat(self, X_shape, X, S, c, Xhat):
+        return jax.tree_util.tree_map(lambda g: jax.vmap(lambda xh: g(X, S, c, xh))(Xhat), self.Grad_B_aux_gauss_X_c)
+    
+    @partial(jax.jit, static_argnums=(0,))
     def DE_gauss(self, x, s, xhat, *args):
         return -jnp.trace(jax.hessian(self.gauss, argnums=2)(x, s, xhat)) + 3 * args[0] ** 2 * self.gauss(x, s, xhat)
 
     @partial(jax.jit, static_argnums=(0,))
     def DB_gauss(self, x, s, xhat, *args):
         return self.gauss(x, s, xhat)
+    
+    @partial(jax.jit, static_argnums=(0,))
+    def DB_aux_gauss(self, x, s, xhat, *args):
+        nabla = jax.grad(self.gauss, argnums=2)(x, s, xhat)
+        tol = 1e-6
+        is_boundary_first = jnp.any(jnp.isclose(xhat[0], jnp.array(self.D[0, :]), atol=tol))
+
+        # Define direction based on which axis is on the boundary
+        # Default direction is (0, 1) if on first coordinate boundary
+        # Otherwise (1, 0) if on second coordinate boundary
+        direction = lax.cond(
+            is_boundary_first,
+            lambda _: jnp.array([0.0, 1.0]),
+            lambda _: jnp.array([1.0, 0.0]),
+            operand=None
+        )
+
+        return jnp.dot(nabla, direction)
+    
+    @partial(jax.jit, static_argnums=(0,))
+    def DB_aux_gauss_X(self, X, S, xhat, *args):
+        return jax.vmap(self.DB_aux_gauss, in_axes=(0, 0, None) + (None,)*len(args))(X, S, xhat, *args)
+
+    @partial(jax.jit, static_argnums=(0,))
+    def DB_aux_gauss_X_Xhat(self, X, S, Xhat, **linear_results):
+        """
+        Compute the linearized PDE operator of the Gaussian kernel at u.
+        """
+        args = []
+        for key in self.DB:
+            args.append(linear_results[key])
+            
+        return jax.vmap(self.DB_aux_gauss_X, in_axes=(None, None, 0)+(0,)*len(args))(X, S, Xhat, *args)
 
     
 class PDE:
@@ -87,7 +172,7 @@ class PDE:
         Initializes the problem setup for a neural network-based Laplacian solver.
         """
         # Problem parameters
-        self.name = 'SemiLinearPDE'
+        self.name = 'SemiLinearPDEH1'
         self.sigma_min = alg_opt.get('sigma_min', 1e-3)
         self.sigma_max = alg_opt.get('sigma_max', 1.0)
 
@@ -143,11 +228,11 @@ class PDE:
         self.Nx_bnd = self.xhat_bnd.shape[0]
         self.Nx = self.Nx_int + self.Nx_bnd
         # Optimization-related attributes
-        self.obj = Objective(self.Nx_int, self.Nx_bnd, scale=self.scale)
+        self.obj = Objective(self.Nx_int, 2*self.Nx_bnd, scale= 2*self.scale)
         
         self.Ntest = 100
         self.test_int, self.test_bnd = self.sample_obs(self.Ntest, method='grid')
-        self.obj_test = Objective(self.test_int.shape[0], self.test_bnd.shape[0], scale=self.scale)
+        self.obj_test = Objective(self.test_int.shape[0], 2*self.test_bnd.shape[0], scale=2*self.scale)
     
     def f(self, x):
         x = np.atleast_2d(x)  # Ensures x has shape (N, 2)

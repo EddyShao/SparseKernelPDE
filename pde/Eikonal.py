@@ -11,6 +11,10 @@ import jax.numpy as jnp
 from functools import partial
 jax.config.update("jax_enable_x64", True)
 
+# set the random seed
+
+
+
 
 
     
@@ -19,23 +23,22 @@ class Kernel(GaussianKernel):
         super().__init__(d=d, power=power, sigma_max=sigma_max, sigma_min=sigma_min, anisotropic=anisotropic)
         self.mask = mask
         self.D = D
-        self.nu = 0.02
-        self.dt = 0.001
-        self.pad_size = 100
 
         # linear results for computing E and B
         self.linear_E = {
-            'Id': self.gauss_X_c_Xhat,
-            'D_x': self.D_x_gauss_X_c_Xhat,
-            'D_xx': self.D_xx_gauss_X_c_Xhat,
+            # 'Id': self.gauss_X_c_Xhat,
+            'Nabla': self.Nabla_gauss_X_c_Xhat,
+            'Lap': self.Lap_gauss_X_c_Xhat,
         }
+
         self.linear_B = {
             'Id': self.gauss_X_c_Xhat,
-        } 
+        }
 
         # linear results required for computing linearized E and B
-        self.DE = ['Id', 'D_x'] 
+        self.DE = ['Nabla'] 
         self.DB = []
+        self.epsilon = 0.1
 
     @partial(jax.jit, static_argnums=(0,))
     def gauss(self, x, s, xhat):
@@ -44,47 +47,48 @@ class Kernel(GaussianKernel):
             mask = jnp.prod(xhat - self.D[:, 0]) * jnp.prod(self.D[:, 1] - xhat)
             output = output * mask
         return output
+    
 
     @shapeParser
     @partial(jax.jit, static_argnums=(0, 1))
-    def D_x_gauss_X_c(self, X_shape, X, S, c, xhat):
-        return jax.grad(self.gauss_X_c, argnums=3)(X, S, c, xhat).squeeze()
+    def Nabla_gauss_X_c(self, X_shape, X, S, c, xhat):
+        return jax.grad(self.gauss_X_c, argnums=3)(X, S, c, xhat)
     
     @partial(shapeParser, pad=True)
     @partial(jax.jit, static_argnums=(0, 1))
-    def D_x_gauss_X_c_Xhat(self, X_shape, X, S, c, Xhat):
-        return jax.vmap(self.D_x_gauss_X_c, in_axes=(None, None, None, 0))(X, S, c, Xhat)
+    def Nabla_gauss_X_c_Xhat(self, X_shape, X, S, c, Xhat): 
+        return jax.vmap(self.Nabla_gauss_X_c, in_axes=(None, None, None, 0))(X, S, c, Xhat)
+
     
     @shapeParser
     @partial(jax.jit, static_argnums=(0, 1))
-    def D_xx_gauss_X_c(self, X_shape, X, S, c, xhat):
-        return jax.hessian(self.gauss_X_c, argnums=3)(X, S, c, xhat)[0, 0]
+    def Lap_gauss_X_c(self, X_shape, X, S, c, xhat):
+        return jnp.trace(jax.hessian(self.gauss_X_c, argnums=3)(X, S, c, xhat))
     
     @partial(shapeParser, pad=True)
     @partial(jax.jit, static_argnums=(0, 1))
-    def D_xx_gauss_X_c_Xhat(self, X_shape, X, S, c, Xhat):
-        return jax.vmap(self.D_xx_gauss_X_c, in_axes=(None, None, None, 0))(X, S, c, Xhat)
+    def Lap_gauss_X_c_Xhat(self, X_shape, X, S, c, Xhat): 
+        return jax.vmap(self.Lap_gauss_X_c, in_axes=(None, None, None, 0))(X, S, c, Xhat)
 
     @shapeParser
     @partial(jax.jit, static_argnums=(0, 1))
     def E_gauss_X_c(self, X_shape, X, S, c, xhat):
-        u = self.gauss_X_c(X, S, c, xhat)
-        u_x = self.D_x_gauss_X_c(X, S, c, xhat)
-        u_xx = self.D_xx_gauss_X_c(X, S, c, xhat)
-        return u - self.dt * (self.nu * u_xx - u_x * u)
+        nabla = self.Nabla_gauss_X_c(X, S, c, xhat)
+        lap = self.Lap_gauss_X_c(X, S, c, xhat)
 
+        return jnp.dot(nabla, nabla) - self.epsilon * lap 
+    
     @shapeParser
     @partial(jax.jit, static_argnums=(0, 1))
     def B_gauss_X_c(self, X_shape, X, S, c, xhat):
         return self.gauss_X_c(X, S, c, xhat)
-
+    
 
     @partial(jax.jit, static_argnums=(0,))
     def E_gauss_X_c_Xhat(self, **linear_results):
-        u = linear_results['Id']
-        u_x = linear_results['D_x']
-        u_xx = linear_results['D_xx']
-        return u - self.dt * (self.nu * u_xx - u_x * u)
+        nabla = linear_results['Nabla']
+        lap = linear_results['Lap']
+        return (nabla ** 2).sum(axis=1)  - self.epsilon * lap
 
     @partial(jax.jit, static_argnums=(0,))
     def B_gauss_X_c_Xhat(self, **linear_results):
@@ -92,20 +96,15 @@ class Kernel(GaussianKernel):
     
     @partial(jax.jit, static_argnums=(0,))
     def DE_gauss(self, x, s, xhat, *args):
-        v = self.gauss(x, s, xhat)
-        v_x = jax.grad(self.gauss, argnums=2)(x, s, xhat).squeeze()
-        v_xx = jax.hessian(self.gauss, argnums=2)(x, s, xhat)[0, 0]
-        u = args[0]
-        u_x = args[1]
-
-        temp = v_x * u + v * u_x
-        return v - self.dt * self.nu * v_xx + self.dt * temp
-
+        nabla_u = args[0]
+        nabla_v = jax.grad(self.gauss, argnums=2)(x, s, xhat)
+        lap_v = jnp.trace(jax.hessian(self.gauss, argnums=2)(x, s, xhat))
+        return 2*jnp.dot(nabla_u, nabla_v) - self.epsilon*lap_v
 
     @partial(jax.jit, static_argnums=(0,))
     def DB_gauss(self, x, s, xhat, *args):
         return self.gauss(x, s, xhat)
-        
+
     
 class PDE:
     def __init__(self, alg_opt):
@@ -113,20 +112,21 @@ class PDE:
         Initializes the problem setup for a neural network-based Laplacian solver.
         """
         # Problem parameters
-        self.name = 'Burgers1D'
+        self.name = 'Eikonal'
         self.sigma_min = alg_opt.get('sigma_min', 1e-3)
         self.sigma_max = alg_opt.get('sigma_max', 1.0)
 
-        self.d = 1  # spatial dimension
+        self.d = 2  # spatial dimension
+        
         
         self.scale = alg_opt.get('scale', 1.0) # Domain size
-        
         self.seed = alg_opt.get('seed', 200)
         np.random.seed(self.seed)
 
 
         # domain for the input weights
         self.D = np.array([
+                [-1., 1.],
                 [-1., 1.],
         ])
 
@@ -145,20 +145,19 @@ class PDE:
 
 
         self.Omega = np.array([
-            # [-1.0, 1.0],
+            [-2.0, 2.0],
             [-2.0, 2.0],
             [-10.0, 0.0],
         ])
         
+        if self.anisotropic:
+            self.Omega = np.vstack([self.Omega[:self.d, :], np.tile(self.Omega[self.d, :], (self.d, 1))])
 
-        assert self.dim == self.Omega.shape[0] 
+        assert self.dim == self.Omega.shape[0] and self.d == self.Omega.shape[1]
 
 
-        # self.u_zero = {"x": np.zeros((0, self.d)), "s": np.zeros((0, self.dim-self.d)),  "u": np.zeros((0))} # initial solution for anisotropic
-        # initial_x, initial_s = self.sample_param(1000)
-
-        # self.u_zero = {"x": initial_x, "s": initial_s,  "u": (5 * np.ones(1000) + np.random.random(1000)) * np.random.choice([-1, 1], size=1000)} # initial solution for anisotropic
         self.u_zero = {"x": np.zeros((0, self.d)), "s": np.zeros((0, self.dim-self.d)),  "u": np.zeros((0))} # initial solution for anisotropic
+
 
         # Observation set
         self.Nobs = alg_opt.get('Nobs', 50)
@@ -173,12 +172,16 @@ class PDE:
         
         self.Ntest = 100
         self.test_int, self.test_bnd = self.sample_obs(self.Ntest, method='grid')
+        self.obj_test = Objective(self.test_int.shape[0], self.test_bnd.shape[0], scale=self.scale)
+
+
     
     def f(self, x):
-        pass
+        return np.ones(x.shape[0])
 
     def ex_sol(self, x):
         pass
+
     
     def sample_obs(self, Nobs, method='grid'):
         """
@@ -186,14 +189,7 @@ class PDE:
         method: 'uniform' or 'grid'
         """
 
-        obs_bnd = np.array([[-1.0], [1.0]])
-        if method == 'grid':
-            obs_int = np.linspace(-1, 1, Nobs)[1:-1].reshape(-1, 1)
-        elif method == 'uniform':
-            # use chebyshev nodes
-            # obs_int = -1 + 2 * np.cos((np.pi * np.arange(1, Nobs-1) / (Nobs-1)))[:, None]
-            obs_int = np.random.uniform(-1, 1, (Nobs-2, 1))
-
+        obs_int, obs_bnd = sample_cube_obs(self.D, Nobs, method=method)
         return obs_int, obs_bnd
 
     def sample_param(self, Ntarget):
@@ -203,24 +199,86 @@ class PDE:
         # randomx = self.Omega[0, 0] + (self.Omega[0, 1] - self.Omega[0, 0]) * np.random.rand(1, Ntarget)
         
         randomx = self.Omega[:self.d, 0] + (self.Omega[:self.d, 1] - self.Omega[:self.d, 0]) * np.random.rand(Ntarget, self.d)
-        # randoms = self.Omega[-1, 0] + (self.Omega[self.d:, 1] - self.Omega[self.d:, 0]) * np.random.rand(Ntarget, self.dim-self.d)
         randoms = self.Omega[-1, 0] + (self.Omega[self.d:, 1] - self.Omega[self.d:, 0]) * np.tile(np.random.rand(Ntarget)[:, None], (1, self.dim-self.d))
 
         return randomx, randoms
 
     def plot_forward(self, x, s, c):
-        plt.figure(figsize=(10, 10))
-        t = np.linspace(-1, 1, 100)
-        y_true = self.ex_sol(t).flatten()
-        y_pred = self.kernel.gauss_X_c_Xhat(x, s, c, t.reshape(-1, 1)).flatten()
-        sigma = self.kernel.sigma(s).flatten()
-        plt.scatter(x, np.zeros_like(x), c='r', label='Support Points')
-        plt.plot(t, y_true, label='True')
-        plt.plot(t, y_pred, label='Predicted')
-        plt.legend()
-        plt.draw()
-        plt.pause(0.1)
-        plt.close()
+        """
+        Plots the forward solution.
+        """
+        # assert self.dim == 3 
+
+        # # Extract the domain range
+        # pO = self.Omega[:-1, :]
+        plt.close('all')  # Close previous figure to prevent multiple windows
+
+        # Create a new figure
+        fig = plt.figure(figsize=(15, 5))
+        ax1 = fig.add_subplot(131, projection='3d')
+        ax2 = fig.add_subplot(132, projection='3d')
+        ax3 = fig.add_subplot(133)
+        # Manually set figure position on screen
+        # try:
+        #     fig_manager = plt.get_current_fig_manager()
+        #     fig_manager.window.wm_geometry("+100+100")  # Move window to (100, 100)
+        # except:
+        #     pass  # Some backends (e.g., inline Jupyter) may not support this
+
+        # Generate grid
+        t_x = np.linspace(self.D[0, 0], self.D[0, 1], 100)
+        t_y = np.linspace(self.D[1, 0], self.D[1, 1], 100)
+        X, Y = np.meshgrid(t_x, t_y)
+        t = np.vstack((X.flatten(), Y.flatten())).T
+
+        if self.ex_sol is not None:
+            f1 = self.ex_sol(t).reshape(X.shape)
+        # Plot exact solution
+        surf1 = ax1.plot_surface(X, Y, f1, cmap='viridis', edgecolor='none')
+        ax1.set_title("Exact Solution")
+        ax1.set_xlabel("X-axis")
+        ax1.set_ylabel("Y-axis")
+        fig.colorbar(surf1, ax=ax1, shrink=0.5, aspect=5)
+
+        # Compute predicted solution
+        Gu = self.kernel.gauss_X_c_Xhat(x, s, c, t)
+        # sigma is sigmoid of S
+        sigma = self.kernel.sigma(s)
+
+        # Plot predicted solution
+        surf2 = ax2.plot_surface(X, Y, Gu.reshape(X.shape), cmap='viridis', edgecolor='none')
+        ax2.set_title("Predicted Solution") 
+        ax2.set_xlabel("X-axis")
+        ax2.set_ylabel("Y-axis")
+        ax2.set_zlabel("$f_2(x, y)$")
+        fig.colorbar(surf2, ax=ax2, shrink=0.5, aspect=5)
+
+
+        # plot all collocation point X
+        # together with error countour plot
+        contour = ax3.contourf(X, Y, np.abs(Gu.reshape(100, 100) - f1), cmap='viridis')        
+        ax3.scatter(x[:, 0].flatten(), x[:, 1].flatten(), color='r', marker='x')
+        if self.anisotropic:
+            for xi, yi, ai, bi in zip(x[:, 0].flatten(), x[:, 1].flatten(), sigma[:, 0].flatten(), sigma[:, 1].flatten()):
+                ellipse = patches.Ellipse((xi, yi), width=2*ai, height=2*bi,
+                              edgecolor='r', facecolor='none',
+                              linestyle='dashed', label="Reference ellipse")
+                ax3.add_patch(ellipse)
+        else:
+            for xi, yi, r in zip(x[:, 0].flatten(), x[:, 1].flatten(), sigma.flatten()):
+                circle = plt.Circle((xi, yi), r, color='r', fill=False, linestyle='dashed', label="Reference circle")
+                ax3.add_patch(circle)
+
+        ax3.set_aspect('equal')  # Ensures circles are properly shaped
+        # # set colorbars
+        ax3.set_xlim(self.Omega[0, 0], self.Omega[0, 1])
+        ax3.set_ylim(self.Omega[1, 0], self.Omega[1, 1])
+        ax3.set_title("Collocation Points, Error Contour") 
+        fig.colorbar(contour, ax=ax3, shrink=0.5, aspect=5)   
+
+        plt.show(block=False)
+        plt.pause(1.0)  
+
 
 
 # if __name__ == '__main__':

@@ -163,10 +163,13 @@ def shapeParser(func, pad=False):
 
             def slice_arr(arr):
                 arr_shape = arr.shape
+                # if no dimension is padded, return the original array
                 if arr_shape[0] == pad_size:
                     slice_sizes = (N,) + arr_shape[1:]
+                elif arr_shape[1] == pad_size:
+                    slice_sizes = (arr_shape[0], N) + arr_shape[2:]  
                 else:
-                    slice_sizes = (arr_shape[0], N) + arr_shape[2:]   
+                    return arr 
                 arr_sliced = jax.lax.dynamic_slice(arr, (0,) * arr.ndim, slice_sizes)
 
                 return arr_sliced

@@ -116,6 +116,9 @@ if args.add_noise:
     rhs += noise
 rhs[-p.Nx_bnd:] = p.ex_sol(p.xhat_bnd)
 
+rhs_test_int = p.f(p.test_int)
+rhs_test_bnd = p.ex_sol(p.test_bnd)
+rhs_test = np.concatenate((rhs_test_int, rhs_test_bnd))
 
 alg_out = solve(p, rhs, alg_opts)
 

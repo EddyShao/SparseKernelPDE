@@ -1,6 +1,7 @@
-from pde.SemiLinearPDE import PDE
+from pde.SemiLinearPDEH1 import PDE
 # from src.solver import solve
-from src.solver_active import solve
+from src.solver_active_h1 import solve
+# from src.solver_first_order import solve
 
 
 import numpy as np
@@ -18,10 +19,10 @@ parser = argparse.ArgumentParser(description='Run the algorithm to solve PDE pro
 parser.add_argument('--anisotropic', action='store_true', help='Enable anisotropic mode (default: False)')
 parser.add_argument('--sigma_max', type=float, default=1.0, help='Maximum value of the kernel width.')
 parser.add_argument('--sigma_min', type=float, default=1e-3, help='Minimum value of the kernel width.')
-parser.add_argument('--blocksize', type=int, default=300, help='Block size for the anisotropic mode.')
+parser.add_argument('--blocksize', type=int, default=100, help='Block size for the anisotropic mode.')
 parser.add_argument('--Nobs', type=int, default=50, help='Base number of observations')
 parser.add_argument('--sampling', type=str, default='grid', help='Sampling method for the observations.')
-parser.add_argument('--scale', type=float, default=0, help='penalty for the boundary condition')
+parser.add_argument('--scale', type=float, default=1000, help='penalty for the boundary condition')
 parser.add_argument('--TOL', type=float, default=1e-5, help='Tolerance for stopping.')
 parser.add_argument('--max_step', type=int, default=5000, help='Maximum number of steps.')
 parser.add_argument('--print_every', type=int, default=100, help='Print every n steps.')
@@ -61,31 +62,50 @@ def f_help(x, center=(0.2, 0.30), k=8, R_0=0.2):
     return result
 
 #########################################################
-####################### two bump ########################
+############ Option 1: Easy function ####################
 #########################################################
 
-R_1 = 0.3
-R_2 = 0.15
-center_1 = [0.30, 0.30]
-center_2 = [-0.30, -0.30]
-k1 = 12
-k2 = 4
+# the function is written as default in the SemiLinearPDE.py
 
-def ex_sol(x):
-    return ex_sol_help(x, center=center_1, k=k1, R_0=R_1) + ex_sol_help(x, center=center_2, k=k2, R_0=R_2)
+#########################################################
+### Option 2: Multi-scales Sharp-transition function ####
+#########################################################
+
+# R = 0.3
+# center = [0., 0.]
+# k = 10
+# def ex_sol(x):
+#    return ex_sol_help(x, center=center, k=k, R_0=R)
+
+# def f(x):
+#    return f_help(x, center=center, k=k, R_0=R) + ex_sol(x) ** 3
 
 
-def f(x):
-    return f_help(x, center=center_1, k=k1, R_0=R_1) + f_help(x, center=center_2, k=k2, R_0=R_2) + ex_sol(x) ** 3
+#########################################################
+### Option 3: Multi-scales Sharp-transition function ####
+#########################################################
+
+# R_1 = 0.3
+# R_2 = 0.15
+# center_1 = [0.30, 0.30]
+# center_2 = [-0.30, -0.30]
+# k1 = 12
+# k2 = 4
+
+# def ex_sol(x):
+#     return ex_sol_help(x, center=center_1, k=k1, R_0=R_1) + ex_sol_help(x, center=center_2, k=k2, R_0=R_2)
+
+
+# def f(x):
+#     return f_help(x, center=center_1, k=k1, R_0=R_1) + f_help(x, center=center_2, k=k2, R_0=R_2) + ex_sol(x) ** 3
+
 
 
 p = PDE(alg_opts)
+p.name = 'SemiLinearSines'
 
-p.f = f
-p.ex_sol = ex_sol
-p.name = 'SemiLinearTwoBumpAdaptive'
-p.kernel.pad_size = 300
-
+# p.f = f
+# p.ex_sol = ex_sol
 
 rhs = p.f(p.xhat)
 
@@ -96,10 +116,14 @@ if args.add_noise:
     rhs += noise
 rhs[-p.Nx_bnd:] = p.ex_sol(p.xhat_bnd)
 
+rhs = np.concatenate((rhs, np.zeros_like(rhs[-p.Nx_bnd:])))
+print(rhs.shape)
+
 rhs_test_int = p.f(p.test_int)
 rhs_test_bnd = p.ex_sol(p.test_bnd)
-rhs_test = np.concatenate((rhs_test_int, rhs_test_bnd))
-
+rhs_test_bnd_aux = np.zeros_like(rhs_test_bnd)
+rhs_test = np.concatenate((rhs_test_int, rhs_test_bnd, rhs_test_bnd_aux))
+print(rhs_test.shape)
 
 def evaluate_and_save_solution(p, rhs, alg_opts, args):
     """
@@ -114,7 +138,7 @@ def evaluate_and_save_solution(p, rhs, alg_opts, args):
     """
     print()
     print('#' * 20)
-    print('alpha:', alg_opts['alpha'])
+    print(f'alpha: {alg_opts["alpha"]:.1e}')
     print('#' * 20)
     print()
     alg_out = solve(p, rhs, alg_opts)
@@ -157,7 +181,8 @@ def evaluate_and_save_solution(p, rhs, alg_opts, args):
     linear_results_bnd = p.kernel.linear_B_results_X_c_Xhat(alg_out['xk'][-1], alg_out['sk'][-1], alg_out['ck'][-1], p.xhat_bnd)
     yk_int = p.kernel.E_gauss_X_c_Xhat(**linear_results_int)
     yk_bnd = p.kernel.B_gauss_X_c_Xhat(**linear_results_bnd)
-    yk = np.hstack([yk_int, yk_bnd])
+    yk_bnd_aux = p.kernel.B_aux_gauss_X_c_Xhat(**linear_results_bnd)
+    yk = np.hstack([yk_int, yk_bnd, yk_bnd_aux])
     misfit = yk - rhs
     residue_train = p.obj.F(misfit) 
 
@@ -165,7 +190,8 @@ def evaluate_and_save_solution(p, rhs, alg_opts, args):
     linear_results_bnd_test = p.kernel.linear_B_results_X_c_Xhat(alg_out['xk'][-1], alg_out['sk'][-1], alg_out['ck'][-1], p.test_bnd)
     yk_int_test = p.kernel.E_gauss_X_c_Xhat(**linear_results_int_test)
     yk_bnd_test = p.kernel.B_gauss_X_c_Xhat(**linear_results_bnd_test)
-    yk_test = np.hstack([yk_int_test, yk_bnd_test])
+    yk_bnd_aux_test = p.kernel.B_aux_gauss_X_c_Xhat(**linear_results_bnd_test)
+    yk_test = np.hstack([yk_int_test, yk_bnd_test, yk_bnd_aux_test])
     misfit_test = yk_test - rhs_test
     residue_test = p.obj_test.F(misfit_test)
 
@@ -231,16 +257,4 @@ def evaluate_and_save_solution(p, rhs, alg_opts, args):
     return alg_out
 
 
-for _ in range(3):
-    # Solve the PDE and evaluate the solution
-    alg_out = evaluate_and_save_solution(p, rhs, alg_opts, args)
-    supp = alg_out['supps'][-1]
-    p.u_zero = {
-        'x': alg_out['xk'][-1, :supp, :],
-        's': alg_out['sk'][-1, :supp, :],
-        'u': alg_out['ck'][-1, :supp]
-    }
-    
-    alg_opts['alpha'] = 0.1 * alg_opts['alpha']  
-    alg_opts['T'] = 10 * alg_opts['T']
-    alg_opts['max_step'] = 2000
+alg_out = evaluate_and_save_solution(p, rhs, alg_opts, args)

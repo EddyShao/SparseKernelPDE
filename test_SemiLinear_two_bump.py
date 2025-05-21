@@ -23,7 +23,7 @@ parser.add_argument('--Nobs', type=int, default=50, help='Base number of observa
 parser.add_argument('--sampling', type=str, default='grid', help='Sampling method for the observations.')
 parser.add_argument('--scale', type=float, default=0, help='penalty for the boundary condition')
 parser.add_argument('--TOL', type=float, default=1e-5, help='Tolerance for stopping.')
-parser.add_argument('--max_step', type=int, default=5000, help='Maximum number of steps.')
+parser.add_argument('--max_step', type=int, default=10000, help='Maximum number of steps.')
 parser.add_argument('--print_every', type=int, default=100, help='Print every n steps.')
 parser.add_argument('--plot_every', type=int, default=100, help='Plot every n steps.')
 parser.add_argument('--insertion_coef', type=float, default=0.01, help='coefficient for thereshold of insertion.') # with metroplis-hasting heuristic insertion coef is not used.
@@ -97,6 +97,11 @@ rhs[-p.Nx_bnd:] = p.ex_sol(p.xhat_bnd)
 
 
 
+rhs_test_int = p.f(p.test_int)
+rhs_test_bnd = p.ex_sol(p.test_bnd)
+rhs_test = np.concatenate((rhs_test_int, rhs_test_bnd))
+
+
 def evaluate_and_save_solution(p, rhs, alg_opts, args):
     """
     Solves the system, evaluates L_inf and L_2 error, pads solution history,
@@ -124,26 +129,78 @@ def evaluate_and_save_solution(p, rhs, alg_opts, args):
     )
 
     # Compute predictions and errors
-    y_pred_bnd = u_pred(p.test_bnd)
-    y_true_bnd = p.ex_sol(p.test_bnd)
-    y_pred_int = u_pred(p.test_int)
-    y_true_int = p.ex_sol(p.test_int)
+    u_pred_bnd_test = u_pred(p.test_bnd)
+    u_true_bnd_test = p.ex_sol(p.test_bnd)
+    u_pred_int_test = u_pred(p.test_int)
+    u_true_int_test = p.ex_sol(p.test_int)
 
-    L_inf_bnd = np.max(np.abs(y_pred_bnd - y_true_bnd))
-    L_inf_int = np.max(np.abs(y_pred_int - y_true_int))
-    L_2 = np.sqrt(
-        (np.sum((y_pred_int - y_true_int)**2) + np.sum((y_pred_bnd - y_true_bnd)**2))
-        * p.vol_D / (p.Ntest ** p.d)
+    L_inf_bnd_test = np.max(np.abs(u_pred_bnd_test - u_true_bnd_test))
+    L_inf_int_test = np.max(np.abs(u_pred_int_test - u_true_int_test))
+    L_2_test = np.sqrt(
+        (np.sum((u_pred_int_test - u_true_int_test)**2) + np.sum((u_pred_bnd_test - u_true_bnd_test)**2))
+        * p.vol_D / (p.test_int.shape[0] + p.test_bnd.shape[0])
     )
+
+    u_pred_bnd_train = u_pred(p.xhat_bnd)
+    u_true_bnd_train = p.ex_sol(p.xhat_bnd)
+    u_pred_int_train = u_pred(p.xhat)
+    u_true_int_train = p.ex_sol(p.xhat)
+    L_inf_bnd_train = np.max(np.abs(u_pred_bnd_train - u_true_bnd_train))
+    L_inf_int_train = np.max(np.abs(u_pred_int_train - u_true_int_train))
+    L_2_train = np.sqrt(
+        (np.sum((u_pred_int_train - u_true_int_train)**2) + np.sum((u_pred_bnd_train - u_true_bnd_train)**2))
+        * p.vol_D / (p.xhat.shape[0] + p.xhat_bnd.shape[0])
+    ) 
+
+    # compute residue for both train and test
+
+    linear_results_int = p.kernel.linear_E_results_X_c_Xhat(alg_out['xk'][-1], alg_out['sk'][-1], alg_out['ck'][-1], p.xhat_int)
+    linear_results_bnd = p.kernel.linear_B_results_X_c_Xhat(alg_out['xk'][-1], alg_out['sk'][-1], alg_out['ck'][-1], p.xhat_bnd)
+    yk_int = p.kernel.E_gauss_X_c_Xhat(**linear_results_int)
+    yk_bnd = p.kernel.B_gauss_X_c_Xhat(**linear_results_bnd)
+    yk = np.hstack([yk_int, yk_bnd])
+    misfit = yk - rhs
+    residue_train = p.obj.F(misfit) 
+
+    linear_results_int_test = p.kernel.linear_E_results_X_c_Xhat(alg_out['xk'][-1], alg_out['sk'][-1], alg_out['ck'][-1], p.test_int)
+    linear_results_bnd_test = p.kernel.linear_B_results_X_c_Xhat(alg_out['xk'][-1], alg_out['sk'][-1], alg_out['ck'][-1], p.test_bnd)
+    yk_int_test = p.kernel.E_gauss_X_c_Xhat(**linear_results_int_test)
+    yk_bnd_test = p.kernel.B_gauss_X_c_Xhat(**linear_results_bnd_test)
+    yk_test = np.hstack([yk_int_test, yk_bnd_test])
+    misfit_test = yk_test - rhs_test
+    residue_test = p.obj_test.F(misfit_test)
+
     print()
     print('#' * 20)
     print(f'alpha: {alg_opts["alpha"]:.1e}')
-    print(f'L_inf error (boundary): {L_inf_bnd:.2e}')
-    print(f'L_inf error (interior): {L_inf_int:.2e}')
-    print(f'L_inf error (total): {max(L_inf_bnd, L_inf_int):.2e}')
-    print(f'L_2 error: {L_2:.2e}')
+    print(f'L_inf error test (boundary): {L_inf_bnd_test:.2e}')
+    print(f'L_inf error test (interior): {L_inf_int_test:.2e}')
+    print(f'L_inf error test (total): {max(L_inf_bnd_test, L_inf_int_test):.2e}')
+    print(f'L_2 error test : {L_2_test:.2e}')
+    print(f'residue test: {residue_test:.2e}')
+    print(f'L_inf error train (boundary): {L_inf_bnd_train:.2e}')
+    print(f'L_inf error train (interior): {L_inf_int_train:.2e}')
+    print(f'L_inf error train (total): {max(L_inf_bnd_train, L_inf_int_train):.2e}')
+    print(f'L_2 error train: {L_2_train:.2e}')
+    print(f'residue train: {residue_train:.2e}')
+    print(f'final support: {alg_out["supps"][-1]}')
+    
     print('#' * 20)
     print()
+
+    final_results = {
+        'L_inf_bnd_test': L_inf_bnd_test,
+        'L_inf_int_test': L_inf_int_test,
+        'L_inf_test': max(L_inf_bnd_test, L_inf_int_test),
+        'L_2_test': L_2_test,
+        'residue_test': residue_test,
+        'L_inf_bnd_train': L_inf_bnd_train,
+        'L_inf_int_train': L_inf_int_train,
+        'L_inf_train': max(L_inf_bnd_train, L_inf_int_train),
+        'L_2_train': L_2_train,
+        'residue_train': residue_train,
+        'final_supp': alg_out['supps'][-1],
+    }
 
     # Post-process alg_out
     num_iter = len(alg_out['sk'])
@@ -164,7 +221,7 @@ def evaluate_and_save_solution(p, rhs, alg_opts, args):
 
     # Combine with options and errors
     alg_out.update(alg_opts)
-    alg_out['error_all'] = np.array([L_inf_int, L_inf_bnd, L_2])
+    alg_out.update(final_results)
 
     # Save output
     if args.save_dir and args.save_idx is not None:
@@ -173,7 +230,6 @@ def evaluate_and_save_solution(p, rhs, alg_opts, args):
         np.savez(f"{out_dir}/out_{args.save_idx}_{alg_opts['alpha']:.0e}.npz", **alg_out)
 
     return alg_out
-
 
 
 alg_out = evaluate_and_save_solution(p, rhs, alg_opts, args)

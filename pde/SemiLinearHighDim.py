@@ -26,9 +26,7 @@ class Kernel(GaussianKernel):
             'Id': self.gauss_X_c_Xhat,
             'Lap': self.Lap_gauss_X_c_Xhat,
         }
-        self.linear_B = {
-            'Id': self.gauss_X_c_Xhat,
-        }
+        self.linear_B = {'Id': self.gauss_X_c_Xhat}
 
         # linear results required for computing linearized E and B
         self.DE = ['Id'] 
@@ -45,7 +43,17 @@ class Kernel(GaussianKernel):
     @shapeParser
     @partial(jax.jit, static_argnums=(0, 1))
     def Lap_gauss_X_c(self, X_shape, X, S, c, xhat):
-        return jnp.trace(jax.hessian(self.gauss_X_c, argnums=3)(X, S, c, xhat))
+        # return jnp.trace(jax.hessian(self.gauss_X_c, argnums=3)(X, S, c, xhat))
+        diff = X - xhat
+        squared_diff = jnp.sum(diff ** 2, axis=1)
+        sigma = self.sigma(S).squeeze()
+        temp =  (squared_diff - self.d * sigma**2) / sigma ** 4
+        lap_phis =  self.gauss_X(X, S, xhat) * temp
+
+        
+        return jnp.dot(c, lap_phis)
+        
+
     
     @partial(shapeParser, pad=True)
     @partial(jax.jit, static_argnums=(0, 1))
@@ -73,8 +81,14 @@ class Kernel(GaussianKernel):
     
     @partial(jax.jit, static_argnums=(0,))
     def DE_gauss(self, x, s, xhat, *args):
-        return -jnp.trace(jax.hessian(self.gauss, argnums=2)(x, s, xhat)) + 3 * args[0] ** 2 * self.gauss(x, s, xhat)
+        # return jnp.trace(jax.hessian(self.gauss_X_c, argnums=3)(X, S, c, xhat))
+        diff = x - xhat
+        squared_diff = jnp.sum(diff ** 2)
+        sigma = self.sigma(s).squeeze()
+        temp =  (squared_diff - self.d * sigma**2) / sigma ** 4
+        return  - self.gauss(x, s, xhat) * temp + 3 * args[0] ** 2 * self.gauss(x, s, xhat)
 
+        
     @partial(jax.jit, static_argnums=(0,))
     def DB_gauss(self, x, s, xhat, *args):
         return self.gauss(x, s, xhat)
@@ -86,11 +100,11 @@ class PDE:
         Initializes the problem setup for a neural network-based Laplacian solver.
         """
         # Problem parameters
-        self.name = 'SemiLinear1D'
+        self.name = 'GaussianHighDim'
         self.sigma_min = alg_opt.get('sigma_min', 1e-3)
         self.sigma_max = alg_opt.get('sigma_max', 1.0)
 
-        self.d = 1  # spatial dimension
+        self.d = alg_opt.get('d', 4)  # spatial dimension
         
         self.scale = alg_opt.get('scale', 1.0) # Domain size
         self.seed = alg_opt.get('seed', 200)
@@ -98,9 +112,16 @@ class PDE:
 
 
         # domain for the input weights
-        self.D = np.array([
-                [-1., 1.],
-        ])
+        # self.D = np.array([
+        #         [-1., 1.],
+        #         [-1., 1.],
+        #         [-1., 1.],
+        #         [-1., 1.]
+        # ])
+        # use dimensionality of the problem to set the domain
+        self.D = np.zeros((self.d, 2))
+        self.D[:, 0] = -1.0
+        self.D[:, 1] = 1.0
 
         self.vol_D = np.prod(self.D[:, 1] - self.D[:, 0])
 
@@ -116,14 +137,25 @@ class PDE:
             self.dim = self.d + 1
 
 
-        self.Omega = np.array([
-            [-2.0, 2.0],
-            [-10.0, 0.0],
-        ])
+
+        # self.Omega = np.array([
+        #     [-2.0, 2.0],
+        #     [-2.0, 2.0],
+        #     [-2.0, 2.0],
+        #     [-2.0, 2.0],
+        #     [-10.0, 0.0]
+        # ])
+
+        self.Omega = np.zeros((self.dim, 2))
+        self.Omega[:self.d, 0] = -2.0
+        self.Omega[:self.d, 1] = 2.0
+        self.Omega[self.d:, 0] = -10.0
+        self.Omega[self.d:, 1] = 0.0
         
         if self.anisotropic:
             self.Omega = np.vstack([self.Omega[:self.d, :], np.tile(self.Omega[self.d, :], (self.d, 1))])
 
+        assert self.dim == self.Omega.shape[0] and self.d == self.D.shape[0]
 
 
         self.u_zero = {"x": np.zeros((0, self.d)), "s": np.zeros((0, self.dim-self.d)),  "u": np.zeros((0))} # initial solution for anisotropic
@@ -139,9 +171,10 @@ class PDE:
         self.Nx = self.Nx_int + self.Nx_bnd
         # Optimization-related attributes
         self.obj = Objective(self.Nx_int, self.Nx_bnd, scale=self.scale)
-        self.Ntest = 200
 
-        self.test_int, self.test_bnd = self.sample_obs(self.Ntest)
+        self.Ntest = self.Nobs
+        self.test_int, self.test_bnd = self.xhat_int, self.xhat_bnd
+
     
     def f(self, x):
         pass
@@ -149,24 +182,13 @@ class PDE:
     def ex_sol(self, x):
         pass
 
-    
     def sample_obs(self, Nobs, method='grid'):
         """
         Samples observations from D
         method: 'uniform' or 'grid'
         """
-        if method == 'grid':
-            obs_int = np.linspace(self.D[0, 0], self.D[0, 1], Nobs)[1:-1]
-            obs_int = obs_int.reshape(-1, 1)
-        elif method == 'uniform':
-            obs_int = self.D[0, 0] + (self.D[0, 1] - self.D[0, 0]) * np.random.rand(Nobs-2, 1)
-        else:
-            raise ValueError("Invalid method")
-        obs_bnd = np.array([
-            [1.],
-            [-1.],
-        ])
-        return obs_int, obs_bnd
+
+        return sample_cube_obs(self.D, Nobs, method=method)
 
     def sample_param(self, Ntarget):
         """
@@ -183,39 +205,43 @@ class PDE:
         """
         Plots the forward solution.
         """
-        """
-        Plots the forward solution.
-        """
-        # assert self.dim == 3 
+        pass
+        # # # assert self.dim == 3 
 
-        # # Extract the domain range
-        # pO = self.Omega[:-1, :]
-        plt.close('all')  # Close previous figure to prevent multiple windows
+        # # # # Extract the domain range
+        # # # pO = self.Omega[:-1, :]
+        # plt.close('all')  # Close previous figure to prevent multiple windows
 
-        # Create a new figure
-        fig = plt.figure(figsize=(5, 5))
-        ax1 = fig.add_subplot(111)
-        t_x = np.linspace(self.D[0, 0], self.D[0, 1], 100)
-        # extend this to d-dimensions, by adding d - 1 zeros
-        t = np.zeros((100, self.d))
-        t[:, 0] = t_x
+        # # Create a new figure
+        # fig = plt.figure(figsize=(5, 5))
+        # ax1 = fig.add_subplot(111)
+        # t_x = np.linspace(self.D[0, 0], self.D[0, 1], 100)
+        # # extend this to d-dimensions, by adding d - 1 zeros
+        # t = np.zeros((100, self.d))
+        # t[:, 0] = t_x
 
-        f1 = self.ex_sol(t)
-        # Plot exact solution
+        # f1 = self.ex_sol(t)
+        # # Plot exact solution
 
-        ax1.plot(t_x, f1, label="Exact Solution")
-    
-        # Compute predicted solution
-        Gu = self.kernel.gauss_X_c_Xhat(x, s, c, t)
-        # sigma is sigmoid of S
-        ax1.plot(t_x, Gu, label="Predicted Solution")
-        sigma = self.kernel.sigma(s).flatten()
-        # plot all collocation point X
-        # together with error countour plot
+        # ax1.plot(t_x, f1, label="Exact Solution")
+        
+
+        # # Compute predicted solution
+        # Gu = self.kernel.gauss_X_c_Xhat(x, s, c, t)
+        # # sigma is sigmoid of S
+        # ax1.plot(t_x, Gu, label="Predicted Solution")
 
 
-        plt.show(block=False)
-        plt.pause(1.0)  
+        # sigma = 1 / (1 + np.exp(-s))
+        # # plot all collocation point X
+        # # together with error countour plot
+
+        # ax1.legend()
+        # plt.show(block=False)
+        # plt.pause(0.1)
+        
+        
+        
 
 
 

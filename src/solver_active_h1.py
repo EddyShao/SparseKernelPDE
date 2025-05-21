@@ -63,7 +63,8 @@ def solve(p, y_ref, alg_opts):
 
     yk_int = p.kernel.E_gauss_X_c_Xhat(**linear_results_int)
     yk_bnd = p.kernel.B_gauss_X_c_Xhat(**linear_results_bnd)
-    yk = np.hstack([yk_int, yk_bnd])
+    yk_bnd_aux = p.kernel.B_aux_gauss_X_c_Xhat(**linear_results_bnd)
+    yk = np.hstack([yk_int, yk_bnd, yk_bnd_aux])
 
     norms_c = np.abs(uk['u'])
 
@@ -127,14 +128,16 @@ def solve(p, y_ref, alg_opts):
 
         Grad_E = p.kernel.Grad_E_gauss_X_c_Xhat(xk, sk, ck, p.xhat_int)
         Grad_B = p.kernel.Grad_B_gauss_X_c_Xhat(xk, sk, ck, p.xhat_bnd)
+        Grad_B_aux = p.kernel.Grad_B_aux_gauss_X_c_Xhat(xk, sk, ck, p.xhat_bnd)
 
         
         Dc_E_gauss, Dx_E_gauss, Ds_E_gauss = Grad_E['grad_c'], Grad_E['grad_X'], Grad_E['grad_S']
         Dc_B_gauss, Dx_B_gauss, Ds_B_gauss = Grad_B['grad_c'], Grad_B['grad_X'], Grad_B['grad_S']
+        Dc_B_aux_gauss, Dx_B_aux_gauss, Ds_B_aux_gauss = Grad_B_aux['grad_c'], Grad_B_aux['grad_X'], Grad_B_aux['grad_S']
 
-        Gp_c = np.vstack([np.array(Dc_E_gauss), np.array(Dc_B_gauss)])
-        Gp_x = np.vstack([np.array(Dx_E_gauss), np.array(Dx_B_gauss)])
-        Gp_s = np.vstack([np.array(Ds_E_gauss), np.array(Ds_B_gauss)])
+        Gp_c = np.vstack([np.array(Dc_E_gauss), np.array(Dc_B_gauss), np.array(Dc_B_aux_gauss)])
+        Gp_x = np.vstack([np.array(Dx_E_gauss), np.array(Dx_B_gauss), np.array(Dx_B_aux_gauss)])
+        Gp_s = np.vstack([np.array(Ds_E_gauss), np.array(Ds_B_gauss), np.array(Ds_B_aux_gauss)])
 
         if Gp_s.ndim == 2:
             Gp_s = Gp_s[:, :, None]
@@ -222,7 +225,8 @@ def solve(p, y_ref, alg_opts):
             linear_results_bnd = p.kernel.linear_B_results_X_c_Xhat(xk, sk, ck, p.xhat_bnd)
             yk_int = p.kernel.E_gauss_X_c_Xhat(**linear_results_int)
             yk_bnd = p.kernel.B_gauss_X_c_Xhat(**linear_results_bnd)
-            yk = np.hstack([yk_int, yk_bnd])
+            yk_bnd_aux = p.kernel.B_aux_gauss_X_c_Xhat(**linear_results_bnd)
+            yk = np.hstack([yk_int, yk_bnd, yk_bnd_aux])
             misfit = yk - y_ref
             norms_c = np.abs(ck)
             j = obj.F(misfit) / alpha + np.sum(phi.phi(norms_c))
@@ -249,8 +253,9 @@ def solve(p, y_ref, alg_opts):
 
         K_test_int = p.kernel.DE_gauss_X_Xhat(omegas_x, omegas_s, p.xhat_int, **linear_results_int)
         K_test_bnd = p.kernel.DB_gauss_X_Xhat(omegas_x, omegas_s, p.xhat_bnd, **linear_results_bnd)
+        K_test_bnd_aux = p.kernel.DB_aux_gauss_X_Xhat(omegas_x, omegas_s, p.xhat_bnd, **linear_results_bnd)
 
-        K_test = np.vstack([K_test_int, K_test_bnd])
+        K_test = np.vstack([K_test_int, K_test_bnd, K_test_bnd_aux])
 
         eta = (1 / alpha) * K_test.T @ obj.dF(misfit) 
         sh_eta = np.abs(Prox(eta)).flatten()
