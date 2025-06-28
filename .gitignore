@@ -1,9 +1,13 @@
 *.npz
 output/
 archive/
+animation/
+metric_dict/
 cfg/
 experiment_*/
 *.ipynb
 output_scripts/
 .history/
 __pycache__/
+*.sh
+figs/

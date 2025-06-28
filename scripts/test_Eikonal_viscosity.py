@@ -1,6 +1,15 @@
-from pde.SemiLinearPDE import PDE
+import sys
+sys.path.append("./")
+from pde.Eikonal import PDE
 # from src.solver import solve
 from src.solver_active import solve
+# from src.solver_first_order import solve
+
+# Scipy
+import scipy.sparse
+from scipy.sparse import diags
+from scipy.sparse import identity
+from scipy.interpolate import RegularGridInterpolator
 
 
 import numpy as np
@@ -18,10 +27,10 @@ parser = argparse.ArgumentParser(description='Run the algorithm to solve PDE pro
 parser.add_argument('--anisotropic', action='store_true', help='Enable anisotropic mode (default: False)')
 parser.add_argument('--sigma_max', type=float, default=1.0, help='Maximum value of the kernel width.')
 parser.add_argument('--sigma_min', type=float, default=1e-3, help='Minimum value of the kernel width.')
-parser.add_argument('--blocksize', type=int, default=300, help='Block size for the anisotropic mode.')
+parser.add_argument('--blocksize', type=int, default=100, help='Block size for the anisotropic mode.')
 parser.add_argument('--Nobs', type=int, default=50, help='Base number of observations')
 parser.add_argument('--sampling', type=str, default='grid', help='Sampling method for the observations.')
-parser.add_argument('--scale', type=float, default=0, help='penalty for the boundary condition')
+parser.add_argument('--scale', type=float, default=1000, help='penalty for the boundary condition')
 parser.add_argument('--TOL', type=float, default=1e-5, help='Tolerance for stopping.')
 parser.add_argument('--max_step', type=int, default=5000, help='Maximum number of steps.')
 parser.add_argument('--print_every', type=int, default=100, help='Print every n steps.')
@@ -37,6 +46,7 @@ parser.add_argument('--add_noise', type=bool, default=False, help='Add noise to 
 parser.add_argument('--save_dir', type=str, default=None, help='Directory to save the output.')
 parser.add_argument('--save_idx', type=int, default=None, help='Index to save the output.')
 parser.add_argument('--T', type=float, default=300.0, help='Temperature for MCMC.')
+parser.add_argument('--epsilon', type=float, default=0.1, help='Eikonal parameter.')
 
 
 args = parser.parse_args()
@@ -44,61 +54,64 @@ alg_opts = vars(args)
 
 print(alg_opts)
 
-# comment out if you want to use the smooth transition function
-def ex_sol_help(x, center=(0.30, 0.30), k=8, R_0=0.2):
-    x = np.atleast_2d(x)  # Ensures x has shape (N, 2)
-    R = np.sqrt((x[:, 0] - center[0])**2 + (x[:, 1] - center[1])**2)
-    return np.tanh(k * (R_0 - R)) + 1
-
-def f_help(x, center=(0.2, 0.30), k=8, R_0=0.2):
-    x = np.atleast_2d(x)  # Ensures x has shape (N, 2)
-    R = np.sqrt((x[:, 0] - center[0])**2 + (x[:, 1] - center[1])**2)
-    tanh_term = np.tanh(k * (R_0 - R))
-    tanh_sq = tanh_term**2
-    term_x = (-2 * k * (x[:, 0] - center[0])**2 * tanh_term / R**2) + ((x[:, 0] - center[0])**2 / R**3) - (1 / R)
-    term_y = (-2 * k * (x[:, 1] - center[1])**2 * tanh_term / R**2) + ((x[:, 1] - center[1])**2 / R**3) - (1 / R)
-    result = k * (tanh_sq - 1) * (term_x + term_y)
-    return result
-
-#########################################################
-####################### two bump ########################
-#########################################################
-
-R_1 = 0.3
-R_2 = 0.15
-center_1 = [0.30, 0.30]
-center_2 = [-0.30, -0.30]
-k1 = 12
-k2 = 4
-
-def ex_sol(x):
-    return ex_sol_help(x, center=center_1, k=k1, R_0=R_1) + ex_sol_help(x, center=center_2, k=k2, R_0=R_2)
-
-
-def f(x):
-    return f_help(x, center=center_1, k=k1, R_0=R_1) + f_help(x, center=center_2, k=k2, R_0=R_2) + ex_sol(x) ** 3
-
 
 p = PDE(alg_opts)
 
-p.f = f
-p.ex_sol = ex_sol
-p.name = 'SemiLinearTwoBumpAdaptive'
-p.kernel.pad_size = 300
+
+rhs = np.ones((p.Nx,))
+rhs[-p.Nx_bnd:] = 0.
+
+rhs_test = np.ones((p.test_int.shape[0] + p.test_bnd.shape[0],))
+rhs_test[-p.test_bnd.shape[0]:] = 0.
 
 
-rhs = p.f(p.xhat)
 
-# optional: add noise to the rhs
-if args.add_noise:
-    rhs_mag = np.max(np.abs(rhs[:-p.Nx_bnd]))
-    noise = np.random.randn(p.Nx) * 0.01 * rhs_mag
-    rhs += noise
-rhs[-p.Nx_bnd:] = p.ex_sol(p.xhat_bnd)
+def solve_Eikonal(N, epsilon, x_left=0., x_right=1.):
+    domain_length = x_right - x_left
+    hg = domain_length / (N + 1)
+    x_grid = x_left + hg * np.arange(1, N + 1)
+    a1 = np.ones((N,N+1))
+    a2 = np.ones((N+1,N))
 
-rhs_test_int = p.f(p.test_int)
-rhs_test_bnd = p.ex_sol(p.test_bnd)
-rhs_test = np.concatenate((rhs_test_int, rhs_test_bnd))
+    # diagonal element of A
+    a_diag = np.reshape(a1[:,:N]+a1[:,1:]+a2[:N,:]+a2[1:,:], (1,-1))
+    
+    # off-diagonals
+    a_super1 = np.reshape(np.append(a1[:,1:N], np.zeros((N,1)), axis = 1), (1,-1))
+    a_super2 = np.reshape(a2[1:N,:], (1,-1))
+    
+    A = diags([[-a_super2[np.newaxis, :]], [-a_super1[np.newaxis, :]], [a_diag], [-a_super1[np.newaxis, :]], [-a_super2[np.newaxis, :]]], [-N,-1,0,1,N], shape=(N**2, N**2), format = 'csr')
+    x_grid_full = np.linspace(x_left, x_right, N+2)
+    XX, YY = np.meshgrid(x_grid_full, x_grid_full)
+    f = np.zeros((N,N))
+    f[0,:] = f[0,:] + epsilon**2 / (hg**2)
+    f[N-1,:] = f[N-1,:] + epsilon**2 / (hg**2)
+    f[:, 0] = f[:, 0] + epsilon**2 / (hg**2)
+    f[:, N-1] = f[:, N-1] + epsilon**2 / (hg**2)
+    fv = f.flatten()
+    fv = fv[:, np.newaxis]
+    
+    mtx = identity(N**2)+(epsilon**2)*A/(hg**2)
+    sol_v = scipy.sparse.linalg.spsolve(mtx, fv)
+    # sol_v, exitCode = scipy.sparse.linalg.cg(mtx, fv)
+    # print(exitCode)
+    sol_u = -epsilon*np.log(sol_v)
+    sol_u = np.reshape(sol_u, (N,N))
+    sol_u = np.pad(sol_u, pad_width=1, mode='constant', constant_values=0.)
+
+    return x_grid_full, XX, YY, sol_u
+
+p.kernel.epsilon = args.epsilon
+print(f'epsilon = {p.kernel.epsilon}')
+# x_grid_full, XX, YY, test_truth = solve_Eikonal(100, p.kernel.epsilon, -1, 1)
+# u_true = RegularGridInterpolator((x_grid_full, x_grid_full), test_truth, bounds_error=False, fill_value=None)
+u_analytical = lambda x: np.min(1 - np.abs(x), axis=1)
+p.ex_sol = u_analytical
+
+
+# build interpolator
+
+
 
 
 def evaluate_and_save_solution(p, rhs, alg_opts, args):
@@ -114,7 +127,7 @@ def evaluate_and_save_solution(p, rhs, alg_opts, args):
     """
     print()
     print('#' * 20)
-    print('alpha:', alg_opts['alpha'])
+    print(f'epsilon: {alg_opts["epsilon"]:.1e}')
     print('#' * 20)
     print()
     alg_out = solve(p, rhs, alg_opts)
@@ -171,7 +184,7 @@ def evaluate_and_save_solution(p, rhs, alg_opts, args):
 
     print()
     print('#' * 20)
-    print(f'alpha: {alg_opts["alpha"]:.1e}')
+    print(f'epsilon: {alg_opts["epsilon"]:.1e}')
     print(f'L_inf error test (boundary): {L_inf_bnd_test:.2e}')
     print(f'L_inf error test (interior): {L_inf_int_test:.2e}')
     print(f'L_inf error test (total): {max(L_inf_bnd_test, L_inf_int_test):.2e}')
@@ -231,16 +244,4 @@ def evaluate_and_save_solution(p, rhs, alg_opts, args):
     return alg_out
 
 
-for _ in range(3):
-    # Solve the PDE and evaluate the solution
-    alg_out = evaluate_and_save_solution(p, rhs, alg_opts, args)
-    supp = alg_out['supps'][-1]
-    p.u_zero = {
-        'x': alg_out['xk'][-1, :supp, :],
-        's': alg_out['sk'][-1, :supp, :],
-        'u': alg_out['ck'][-1, :supp]
-    }
-    
-    alg_opts['alpha'] = 0.1 * alg_opts['alpha']  
-    alg_opts['T'] = 10 * alg_opts['T']
-    alg_opts['max_step'] = 2000
+alg_out = evaluate_and_save_solution(p, rhs, alg_opts, args)

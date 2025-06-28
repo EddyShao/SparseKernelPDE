@@ -1,3 +1,5 @@
+import sys
+sys.path.append("./")
 from pde.Burgers1Dorder1ex import PDE as PDEorder1
 # from pde.Burgers1Dorder2 import PDE as PDEorder2
 # from src.solver import solve

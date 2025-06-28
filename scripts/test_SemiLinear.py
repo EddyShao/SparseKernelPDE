@@ -1,3 +1,5 @@
+import sys
+sys.path.append("./")
 from pde.SemiLinearPDE import PDE
 # from src.solver import solve
 from src.solver_active import solve

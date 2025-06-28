@@ -1,12 +1,13 @@
-from pde.PoissonHighDim import PDE
+import sys
+sys.path.append("./")
+from pde.SemiLinear1D import PDE
 # from src.solver import solve
 from src.solver_active import solve
+# from src.solver_first_order import solve
 
 
 import numpy as np
 import matplotlib.pyplot as plt
-import jax.numpy as jnp
-import jax
 
 import os
 import datetime
@@ -16,16 +17,16 @@ import argparse
 
 parser = argparse.ArgumentParser(description='Run the algorithm to solve PDE problem.')
 
+
 parser.add_argument('--anisotropic', action='store_true', help='Enable anisotropic mode (default: False)')
-parser.add_argument('--d', type=int, default=2, help='Dimension of the problem.')
 parser.add_argument('--sigma_max', type=float, default=1.0, help='Maximum value of the kernel width.')
 parser.add_argument('--sigma_min', type=float, default=1e-3, help='Minimum value of the kernel width.')
-parser.add_argument('--blocksize', type=int, default=10000, help='Block size for the anisotropic mode.')
-parser.add_argument('--Nobs', type=int, default=10, help='Base number of observations')
+parser.add_argument('--blocksize', type=int, default=100, help='Block size for the anisotropic mode.')
+parser.add_argument('--Nobs', type=int, default=50, help='Base number of observations')
 parser.add_argument('--sampling', type=str, default='grid', help='Sampling method for the observations.')
-parser.add_argument('--scale', type=float, default=0, help='penalty for the boundary condition')
+parser.add_argument('--scale', type=float, default=1000, help='penalty for the boundary condition')
 parser.add_argument('--TOL', type=float, default=1e-5, help='Tolerance for stopping.')
-parser.add_argument('--max_step', type=int, default=3000, help='Maximum number of steps.')
+parser.add_argument('--max_step', type=int, default=5000, help='Maximum number of steps.')
 parser.add_argument('--print_every', type=int, default=100, help='Print every n steps.')
 parser.add_argument('--plot_every', type=int, default=100, help='Plot every n steps.')
 parser.add_argument('--insertion_coef', type=float, default=0.01, help='coefficient for thereshold of insertion.') # with metroplis-hasting heuristic insertion coef is not used.
@@ -46,146 +47,87 @@ alg_opts = vars(args)
 
 print(alg_opts)
 
+c1, c2 = -0.0, 0.3
+k1, k2 = 1, 6
+R1, R2 = 0.3, 0.15
 
 
+# def ex_sol_help(x, c, k, R):
+#     z = k**2 * (R**2 - (x - c)**2)
+#     return np.tanh(z).flatten()
 
+# def f_help(x, c, k, R):
+#     z = k**2 * (R**2 - (x - c)**2)
+#     sech2 = 1 / np.cosh(z)**2
+#     term1 = -2 * k**2 * sech2
+#     term2 = 4 * k**4 * (x - c)**2 * np.tanh(z) * sech2
+#     results = term1 + term2
+#     return results.flatten()
 
-    
+# def ex_sol(x):
+#     return ex_sol_help(x, c1, k1, R1) 
 
+# def f(x):
+#     return - (f_help(x, c1, k1, R1) ) + ex_sol(x)**3
 
+# def two_valley_function(x, c1=-0.5, c2=0.5, k1=5, k2=20, a1=1.0, a2=1.0):
+#     valley1 = a1 * np.exp(-k1 * (x - c1)**2)
+#     valley2 = a2 * np.exp(-k2 * (x - c2)**2)
+#     return valley1 + valley2
+
+# def ex_sol(x):
+#     return two_valley_function(x, c1=-0.5, c2=0.5, k1=5, k2=20, a1=1.0, a2=1.0).flatten()
+
+# def laplacian_two_valley(x, c1=-0.5, c2=0.5, k1=5, k2=20, a1=1.0, a2=1.0):
+#     term1 = -2 * a1 * k1 * np.exp(-k1 * (x - c1)**2) * (1 - 2 * k1 * (x - c1)**2)
+#     term2 = -2 * a2 * k2 * np.exp(-k2 * (x - c2)**2) * (1 - 2 * k2 * (x - c2)**2)
+#     rerults = term1 + term2
+#     return rerults.flatten()
+
+# def f(x):
+#     return - laplacian_two_valley(x, c1=-0.5, c2=0.5, k1=5, k2=20, a1=1.0, a2=1.0) + ex_sol(x)**3
+
+def tanh_valley(x, c, d, k, a):
+    return -a * (np.tanh(k * (x - c)) - np.tanh(k * (x - d)))
+
+def laplacian_tanh_valley(x, c, d, k, a):
+    term_c = np.tanh(k * (x - c)) * (1 / np.cosh(k * (x - c)))**2
+    term_d = np.tanh(k * (x - d)) * (1 / np.cosh(k * (x - d)))**2
+    return 2 * a * k**2 * (term_c - term_d)
+
+def tanh_two_valleys(x):
+    v1 = tanh_valley(x, c=-1.0, d=-0.2, k=10, a=1.0)
+    v2 = tanh_valley(x, c=0.3, d=0.4, k=30, a=0.5)
+    return v1 + v2
+
+def laplacian_tanh_two_valleys(x):
+    l1 = laplacian_tanh_valley(x, c=-1.0, d=-0.2, k=10, a=1.0)
+    l2 = laplacian_tanh_valley(x, c=0.3, d=0.4, k=30, a=0.5)
+    return l1 + l2
+
+def ex_sol(x):
+    return tanh_two_valleys(x).flatten()
+
+def f(x):
+    return - (laplacian_tanh_two_valleys(x)).flatten() + ex_sol(x)**3
 
 
 p = PDE(alg_opts)
-p.name = 'GaussianHighDim'
-
-e = jnp.ones(p.d)
-# e = e.at[0].set(1.0)
-# e = e.at[2].set(-1.0)
-# e = e.at[3].set(1.0)
-
-
-
-# def ex_sol_help(x, center):
-#     x = np.atleast_2d(x)
-#     # use vmap to vectorize the function
-#     inner = np.dot(x, e)
-#     result = np.exp(-(inner-center) ** 2)
-#     return result
-
-# def f_help(x, center):
-#     x = np.atleast_2d(x)
-#     # use vmap to vectorize the function
-#     inner = np.dot(x, e)
-#     lap = (4 * (inner - center)**2 - 2) * ex_sol_help(x, center) * np.dot(e, e)
-#     return - lap
-
-# def ex_sol(x):
-#     x = np.atleast_2d(x)
-#     # use vmap to vectorize the function
-#     inner = np.dot(x, e)
-#     result = np.sin(np.pi * inner)
-#     return result
-
-# def f(x):
-#     x = np.atleast_2d(x)
-#     # use vmap to vectorize the function
-#     inner = np.dot(x, e)
-#     lap = - (np.pi**2) * ex_sol(x) * np.dot(e, e)
-#     return - lap
-
-# center_1 = 0.30
-# center_2 = -0.30
-
-# p.ex_sol = ex_sol
-# p.f = f
-
-def ex_sol(x):
-    x = np.atleast_2d(x)
-    result = np.prod(np.sin(np.pi * x), axis=1) 
-    return result if len(result) > 1 else result[0]
-
-def f(x):
-    return p.d * np.pi**2 * ex_sol(x)
-
-
-
-
-# def ex_sol(x):
-#     x = np.atleast_2d(x)
-#     # use vmap to vectorize the function
-#     inner = np.dot(x, e)
-#     result = np.tanh(20 * (inner + 0.3)) - np.tanh(20 * (inner - 0.3))
-#     return result
-
-
-# def f(x):
-#     x = np.atleast_2d(x)
-#     inner = np.dot(x, e)
-
-#     # First and second derivatives of tanh
-#     sech_sq_1 = 1 / np.cosh(20 * (inner + 0.3)) ** 2
-#     sech_sq_2 = 1 / np.cosh(20 * (inner - 0.3)) ** 2
-
-#     tanh_1 = np.tanh(20 * (inner + 0.3))
-#     tanh_2 = np.tanh(20 * (inner - 0.3))
-
-#     lap = -800 * (tanh_1 * sech_sq_1 - tanh_2 * sech_sq_2)
-
-#     return -lap if x.shape[0] > 1 else -lap[0]
-
-
-# @jax.jit
-# def ex_sol_1d(x):
-#     return 2*jnp.exp(-x**2)
-
-# @jax.jit
-# def f_1d(x):
-#     hess_fn = jax.hessian(ex_sol_1d)
-#     return -hess_fn(x)  # hessian is scalar since input is 1D
-
-# def ex_sol(x):
-#     x = np.atleast_2d(x)
-#     inner = np.dot(x, e).flatten()
-#     result = jax.vmap(ex_sol_1d)(inner)
-#     return np.array(result) if result.shape[0] > 1 else float(result[0])
-
-# def f(x):
-#     x = np.atleast_2d(x)
-#     inner = np.dot(x, e).flatten()
-#     result = jax.vmap(f_1d)(inner)
-#     result *= np.dot(e, e)
-#     return np.array(result) if result.shape[0] > 1 else float(result[0])
-
-# p.f = f
-# p.ex_sol = ex_sol
-
-
-
-
-# def ex_sol(x):
-#     x = np.atleast_2d(x)
-#     # use vmap to vectorize the function
-#     inner = np.dot(x, e)
-#     return inner ** 2 - 2 * inner **1 + 1
-
-# def f(x):
-#     x = np.atleast_2d(x)
-#     # use vmap to vectorize the function
-#     inner = np.dot(x, e)
-#     norm_square_e = np.dot(e, e)
-#     return 2 * norm_square_e * np.ones_like(inner) 
 
 p.f = f
 p.ex_sol = ex_sol
-rhs = p.f(p.xhat)
+
+
+rhs = p.f(p.xhat).flatten()
+print(rhs.shape)
 
 # optional: add noise to the rhs
 if args.add_noise:
     rhs_mag = np.max(np.abs(rhs[:-p.Nx_bnd]))
     noise = np.random.randn(p.Nx) * 0.01 * rhs_mag
     rhs += noise
+rhs[-p.Nx_bnd:] = p.ex_sol(p.xhat_bnd).flatten()
 
-rhs[-p.Nx_bnd:] = p.ex_sol(p.xhat_bnd)
 
 
 

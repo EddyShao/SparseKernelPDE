@@ -1,4 +1,6 @@
-from pde.SemiLinear1D import PDE
+import sys
+sys.path.append("./")
+from pde.Regression1D import PDE
 # from src.solver import solve
 from src.solver_active import solve
 # from src.solver_first_order import solve
@@ -19,8 +21,8 @@ parser = argparse.ArgumentParser(description='Run the algorithm to solve PDE pro
 parser.add_argument('--anisotropic', action='store_true', help='Enable anisotropic mode (default: False)')
 parser.add_argument('--sigma_max', type=float, default=1.0, help='Maximum value of the kernel width.')
 parser.add_argument('--sigma_min', type=float, default=1e-3, help='Minimum value of the kernel width.')
-parser.add_argument('--blocksize', type=int, default=100, help='Block size for the anisotropic mode.')
-parser.add_argument('--Nobs', type=int, default=50, help='Base number of observations')
+parser.add_argument('--blocksize', type=int, default=10000, help='Block size for the anisotropic mode.')
+parser.add_argument('--Nobs', type=int, default=2000, help='Base number of observations')
 parser.add_argument('--sampling', type=str, default='grid', help='Sampling method for the observations.')
 parser.add_argument('--scale', type=float, default=1000, help='penalty for the boundary condition')
 parser.add_argument('--TOL', type=float, default=1e-5, help='Tolerance for stopping.')
@@ -38,6 +40,8 @@ parser.add_argument('--add_noise', type=bool, default=False, help='Add noise to 
 parser.add_argument('--save_dir', type=str, default=None, help='Directory to save the output.')
 parser.add_argument('--save_idx', type=int, default=None, help='Index to save the output.')
 parser.add_argument('--T', type=float, default=300.0, help='Temperature for MCMC.')
+parser.add_argument('--K', type=float, default=1.0, help='K parameter for the function.')
+
 
 
 args = parser.parse_args()
@@ -45,70 +49,16 @@ alg_opts = vars(args)
 
 print(alg_opts)
 
-c1, c2 = -0.0, 0.3
-k1, k2 = 1, 6
-R1, R2 = 0.3, 0.15
+f_help = lambda x, k : np.cos(6 * np.pi *  k * x) - np.sin(2 * np.pi * k * x) 
+# f_help = lambda x, k : x ** 2
 
-
-# def ex_sol_help(x, c, k, R):
-#     z = k**2 * (R**2 - (x - c)**2)
-#     return np.tanh(z).flatten()
-
-# def f_help(x, c, k, R):
-#     z = k**2 * (R**2 - (x - c)**2)
-#     sech2 = 1 / np.cosh(z)**2
-#     term1 = -2 * k**2 * sech2
-#     term2 = 4 * k**4 * (x - c)**2 * np.tanh(z) * sech2
-#     results = term1 + term2
-#     return results.flatten()
-
-# def ex_sol(x):
-#     return ex_sol_help(x, c1, k1, R1) 
-
-# def f(x):
-#     return - (f_help(x, c1, k1, R1) ) + ex_sol(x)**3
-
-# def two_valley_function(x, c1=-0.5, c2=0.5, k1=5, k2=20, a1=1.0, a2=1.0):
-#     valley1 = a1 * np.exp(-k1 * (x - c1)**2)
-#     valley2 = a2 * np.exp(-k2 * (x - c2)**2)
-#     return valley1 + valley2
-
-# def ex_sol(x):
-#     return two_valley_function(x, c1=-0.5, c2=0.5, k1=5, k2=20, a1=1.0, a2=1.0).flatten()
-
-# def laplacian_two_valley(x, c1=-0.5, c2=0.5, k1=5, k2=20, a1=1.0, a2=1.0):
-#     term1 = -2 * a1 * k1 * np.exp(-k1 * (x - c1)**2) * (1 - 2 * k1 * (x - c1)**2)
-#     term2 = -2 * a2 * k2 * np.exp(-k2 * (x - c2)**2) * (1 - 2 * k2 * (x - c2)**2)
-#     rerults = term1 + term2
-#     return rerults.flatten()
-
-# def f(x):
-#     return - laplacian_two_valley(x, c1=-0.5, c2=0.5, k1=5, k2=20, a1=1.0, a2=1.0) + ex_sol(x)**3
-
-def tanh_valley(x, c, d, k, a):
-    return -a * (np.tanh(k * (x - c)) - np.tanh(k * (x - d)))
-
-def laplacian_tanh_valley(x, c, d, k, a):
-    term_c = np.tanh(k * (x - c)) * (1 / np.cosh(k * (x - c)))**2
-    term_d = np.tanh(k * (x - d)) * (1 / np.cosh(k * (x - d)))**2
-    return 2 * a * k**2 * (term_c - term_d)
-
-def tanh_two_valleys(x):
-    v1 = tanh_valley(x, c=-1.0, d=-0.2, k=10, a=1.0)
-    v2 = tanh_valley(x, c=0.3, d=0.4, k=30, a=0.5)
-    return v1 + v2
-
-def laplacian_tanh_two_valleys(x):
-    l1 = laplacian_tanh_valley(x, c=-1.0, d=-0.2, k=10, a=1.0)
-    l2 = laplacian_tanh_valley(x, c=0.3, d=0.4, k=30, a=0.5)
-    return l1 + l2
+K = args.K
 
 def ex_sol(x):
-    return tanh_two_valleys(x).flatten()
+    return f_help(x, K).flatten()
 
 def f(x):
-    return - (laplacian_tanh_two_valleys(x)).flatten() + ex_sol(x)**3
-
+    return f_help(x, K).flatten()
 
 p = PDE(alg_opts)
 
@@ -125,6 +75,8 @@ if args.add_noise:
     noise = np.random.randn(p.Nx) * 0.01 * rhs_mag
     rhs += noise
 rhs[-p.Nx_bnd:] = p.ex_sol(p.xhat_bnd).flatten()
+
+print(rhs.shape)
 
 
 
