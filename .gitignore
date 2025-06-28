@@ -11,3 +11,4 @@ output_scripts/
 __pycache__/
 *.sh
 figs/
+.DS_Store

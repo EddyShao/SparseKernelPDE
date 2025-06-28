@@ -10,7 +10,7 @@ The code is tested with Python 3.9. After activating your virtual environment, i
 pip install -r requirements.txt
 ```
 
-## The architecture of this code
+## Code Structure
 ### In the `src` folder:
 - `GaussianKernel.py` defines the generic Gaussian Kernel.
 - `solver*.py` defines solvers for various usages. 
