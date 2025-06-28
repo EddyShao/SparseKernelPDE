@@ -34,7 +34,7 @@ python scripts/test_SemiLinear_Sines.py --Nobs 20  --scale 0 --alpha 1e-3 --TOL 
 python scripts/test_SemiLinear_two_bump_adaptive.py --Nobs 30 --scale 1000 --alpha 1e-2 --T 30 --TOL 1e-5 --plot_final
 python scripts/test_SemiLinearHighDim.py --Nobs 8 --scale 3000 --alpha 1e-4 --TOL 1e-4 --T 1e-4 --d 4 --plot_final
 python scripts/test_Burgers1Ddt_explicit.py --Nobs 40 --scale 0 --alpha 1e-8 --T 1e4 --TOL 1e-8 --dt 0.001
-python scripts/test_Eikonal_regularized.py -- Nobs 20 --scale 0 --alpha 1e-4 --T 5e-5 --TOL 1e-7 --epsilon 1e-1 --plot_final
+python scripts/test_Eikonal_regularized.py --Nobs 20 --scale 0 --alpha 1e-4 --T 5e-5 --TOL 1e-7 --epsilon 1e-1 --plot_final
 python scripts/test_Eikonal_viscosity.py --Nobs 30 --scale 0 --alpha 1e-6 --T 5e-2 --TOL 1e-6 --epsilon 1e-2 --plot_final
 ```
 
