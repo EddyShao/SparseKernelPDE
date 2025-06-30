@@ -267,8 +267,9 @@ def solve(p, y_ref, alg_opts):
 
         # Print iteration info
         if k % print_every == 0:
+            dz_norm = np.linalg.norm(dz, np.inf) if dz.size > 0 else 0.0
             print(f"Time: {time.time() - start_time:.2f}s CGNAP iter: {k}, j={j:.6f}, supp=({Nc}->{np.sum(suppc)}), "
-                f"desc={descent:.1e}, dz={np.linalg.norm(dz, np.inf):.1e}, "
+                f"desc={descent:.1e}, dz={dz_norm:.1e}, "
                 f"viol={max_sh_eta:.1e}, theta={theta:.1e}")
 
             
