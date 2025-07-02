@@ -2,6 +2,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+from matplotlib import cm
+
 from src.GaussianKernel import GaussianKernel
 # from kernel.GaussianKernel_backup import GaussianKernel
 # from src.GaussianKernel_backup import GaussianKernel
@@ -209,17 +211,20 @@ class PDE:
         return randomx, randoms
 
     def plot_forward(self, x, s, c):
-        plt.figure(figsize=(10, 10))
-        t = np.linspace(-1, 1, 100)
+        plt.figure(figsize=(10, 8), num=100)
+        t = np.linspace(-1, 1, 1000)
         y_true = self.ex_sol(t).flatten()
         y_pred = self.kernel.gauss_X_c_Xhat(x, s, c, t.reshape(-1, 1)).flatten()
         sigma = self.kernel.sigma(s).flatten()
-        plt.scatter(x, np.zeros_like(x), c='r', label='Support Points')
+        c_abs = np.abs(c)
+        c_max = np.max(c_abs)
+        plt.scatter(x, np.zeros_like(x), c=c/c_max, s=(2+200*sigma), cmap=cm.coolwarm, label='Support Points')
         plt.plot(t, y_true, label='True')
         plt.plot(t, y_pred, label='Predicted')
         plt.legend()
+        plt.tight_layout()
         plt.draw()
-        plt.pause(0.1)
+        plt.pause(.1)
         plt.close()
 
 

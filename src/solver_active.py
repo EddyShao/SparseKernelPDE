@@ -343,7 +343,7 @@ def solve(p, y_ref, alg_opts):
         
 
         # Plot results
-        if k % plot_every == 0:            
+        if plot_every > 0 and k % plot_every == 0:
             p.plot_forward(xk, sk, ck)
 
         # Stopping criterion

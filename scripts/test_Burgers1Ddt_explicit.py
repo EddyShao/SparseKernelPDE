@@ -29,15 +29,15 @@ parser.add_argument('--blocksize', type=int, default=100, help='Block size for t
 parser.add_argument('--Nobs', type=int, default=50, help='Base number of observations')
 parser.add_argument('--sampling', type=str, default='grid', help='Sampling method for the observations.')
 parser.add_argument('--scale', type=float, default=0, help='penalty for the boundary condition')
-parser.add_argument('--TOL', type=float, default=1e-5, help='Tolerance for stopping.')
+parser.add_argument('--TOL', type=float, default=1e-10, help='Tolerance for stopping.')
 parser.add_argument('--max_step', type=int, default=5000, help='Maximum number of steps.')
-parser.add_argument('--print_every', type=int, default=100, help='Print every n steps.')
-parser.add_argument('--plot_every', type=int, default=100, help='Plot every n steps.')
-parser.add_argument('--insertion_coef', type=float, default=0.1, help='coefficient for thereshold of insertion.') # with metroplis-hasting heuristic insertion coef is not used.
+parser.add_argument('--print_every', type=int, default=10, help='Print every n steps.')
+parser.add_argument('--plot_every', type=int, default=0, help='Plot every n steps.')
+parser.add_argument('--insertion_coef', type=float, default=0.1, help='coefficient for threshold of insertion.') # with metroplis-hasting heuristic insertion coef is not used.
 parser.add_argument('--gamma', type=float, default=0, help='gamma.')
-parser.add_argument('--alpha', type=float, default=0.001, help='Alpha parameter.')
-parser.add_argument('--Ntrial', type=int, default=10000, help='Number of candidate parameters sampled each iter.')
-parser.add_argument('--plot_final', action='store_true', help='Plot the final result.')
+parser.add_argument('--alpha', type=float, default=1e-8, help='Alpha parameter.')
+parser.add_argument('--Ntrial', type=int, default=200, help='Number of candidate parameters sampled each iter.')
+parser.add_argument('--plot_final', action='store_true', default=True, help='Plot the final result.')
 parser.add_argument('--seed', type=int, default=200, help='Random seed for reproductivity.')
 parser.add_argument('--index', type=str, default=None, help='index of the configuration to load.')
 parser.add_argument('--add_noise', type=bool, default=False, help='Add noise to the rhs.')
@@ -126,10 +126,12 @@ start = time.time()
 for idx in range(1, n_steps+1):
     print()
     print(f"Step {idx} Time {time.time() - start:.2f}")
+    #alg_opts['plot_final'] = (idx % 4 == 1)
     p_idx = PDEorder1(alg_opts)
+    p_idx.kernel.nu = nu
     p_idx.kernel.dt = args.dt
-    if idx > 3:
-        alg_opts['max_step'] = 1000
+    #if idx > 3:
+    #    alg_opts['max_step'] = 2000
     
     def f(xhat):
         u_prev = hist_u[-1](xhat)
