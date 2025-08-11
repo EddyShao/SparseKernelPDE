@@ -10,6 +10,13 @@ The code is tested with Python 3.9. After activating your virtual environment, i
 pip install -r requirements.txt
 ```
 
+### JAX and CUDA Compatibilitys
+ 
+This project was developed using JAX 0.3.10 with its corresponding CUDA/cuDNN build.
+In general, the software does not depend on a specific JAX version, as long as you install a JAX build that matches your CUDA version when running on GPU.
+
+In general, the software does not depend on a specific JAX version, as long as you install a JAX build that matches your CUDA version when running on GPU; please refer to the [official JAX installation guide](https://github.com/google/jax#installation) for the correct CUDA-enabled JAXLIB wheel.
+
 ## Code Structure
 ### In the `src` folder:
 - `GaussianKernel.py` defines the generic Gaussian Kernel.
