@@ -1,7 +1,7 @@
 import sys
 sys.path.append("./")
 from pde.Eikonal import PDE
-from src.solver_active_new import solve
+from src.solver import solve
 from src.utils import Objective, compute_errors, compute_y, compute_rhs
 # Scipy (Cole-Hopf method for Eikonal)
 import scipy.sparse

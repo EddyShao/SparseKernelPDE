@@ -1,7 +1,6 @@
 import sys
 sys.path.append("./")
 from pde.SemiLinear1D import PDE
-# from src.solver import solve
 from src.solver import solve
 
 
