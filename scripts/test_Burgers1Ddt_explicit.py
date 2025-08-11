@@ -3,7 +3,8 @@ sys.path.append("./")
 from pde.Burgers1Dorder1ex import PDE as PDEorder1
 # from pde.Burgers1Dorder2 import PDE as PDEorder2
 # from src.solver import solve
-from src.solver_active import solve
+# from src.solver_active import solve
+from src.solver import solve
 from scipy.interpolate import RegularGridInterpolator
 import jax.numpy as jnp
 import jax

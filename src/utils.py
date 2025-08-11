@@ -16,13 +16,13 @@ def computeProx(v, mu):
         vprox (ndarray): Output array after applying the shrinkage operator.
     """
     # Compute vector norms
-    normsv = np.abs(v)
+    normsv = jnp.abs(v)
 
     # Safeguard against division by zero
-    normsv_safe = np.maximum(normsv, (mu + np.finfo(float).eps) * np.finfo(float).eps)
+    normsv_safe = jnp.maximum(normsv, (mu + jnp.finfo(float).eps) * jnp.finfo(float).eps)
 
     # Apply soft shrinkage operator
-    shrink_factor = np.maximum(0, 1 - mu / normsv_safe)
+    shrink_factor = jnp.maximum(0, 1 - mu / normsv_safe)
     vprox = shrink_factor * v  # Element-wise multiplication
 
     return vprox
@@ -37,14 +37,15 @@ class Objective:
         self.scale = scale
         self.Nx_int, self.Nx_bnd = Nx_int, Nx_bnd
         self.Nx = self.Nx_int + self.Nx_bnd
-        self.p_vec = np.ones(self.Nx) / self.Nx_int # Weight vector
-        self.p_vec[-self.Nx_bnd:] = scale / self.Nx_bnd # Apply penalty for boundary conditions
+        self.p_vec = jnp.ones(self.Nx) / self.Nx_int # Weight vector
+        # self.p_vec[-self.Nx_bnd:] = scale / self.Nx_bnd # Apply penalty for boundary conditions
+        self.p_vec = self.p_vec.at[-self.Nx_bnd:].set(scale / self.Nx_bnd)
         self.p_vec = self.p_vec.reshape(-1, 1) # reshape to column vector (Nx, 1)
 
     def F(self, y):
         y = y.reshape(-1, 1)
         """Computes the objective function F(y)."""
-        return 0.5 * np.sum(self.p_vec * y ** 2)
+        return 0.5 * jnp.sum(self.p_vec * y ** 2)
 
     def dF(self, y):
         y = y.reshape(-1, 1)
@@ -53,40 +54,40 @@ class Objective:
 
     def ddF(self, y):
         """Computes the Hessian (second derivative) of F(y)."""
-        return np.diag(self.p_vec.flatten())
+        return jnp.diag(self.p_vec.flatten())
     
 def sample_cube_obs(D, Nobs, method='grid'):
     d = D.shape[0]
     if method == 'grid':
         obs = []
         for i in range(d):
-            obs.append(np.linspace(D[i, 0], D[i, 1], Nobs))  # Exclude boundaries
-        obs = np.meshgrid(*obs, indexing='ij')
-        obs = np.vstack([obs[i].flatten() for i in range(d)]).T
+            obs.append(jnp.linspace(D[i, 0], D[i, 1], Nobs))  # Exclude boundaries
+        obs = jnp.meshgrid(*obs, indexing='ij')
+        obs = jnp.vstack([obs[i].flatten() for i in range(d)]).T
 
-        mask = np.any(np.isclose(obs, D[:, 0]) | np.isclose(obs, D[:, 1]), axis=1)
+        mask = jnp.any(jnp.isclose(obs, D[:, 0]) | jnp.isclose(obs, D[:, 1]), axis=1)
         obs_int = obs[~mask]
         obs_bnd = obs[mask]
 
     elif method == 'uniform':
-        obs_int  = D[:, 0] + (D[:, 1] - D[:, 0]) * np.random.rand((Nobs-2)**d, D.shape[0])
+        obs_int  = D[:, 0] + (D[:, 1] - D[:, 0]) * jnp.random.rand((Nobs-2)**d, D.shape[0])
         obs = []
         d = D.shape[0]
         N_per_side = (Nobs ** d - (Nobs-2) ** d) // (2 * d) + 1
 
         for i in range(D.shape[0]):
-            face1 = np.full((N_per_side, D.shape[0]), D[i, 0])
-            face2 = np.full((N_per_side, D.shape[0]), D[i, 1])
-            mask = np.arange(D.shape[0]) != i
+            face1 = jnp.full((N_per_side, D.shape[0]), D[i, 0])
+            face2 = jnp.full((N_per_side, D.shape[0]), D[i, 1])
+            mask = jnp.arange(D.shape[0]) != i
             # D[mask, 0] and D[mask, 1] have shape (d-1,)
             # We add a new axis so that they broadcast to shape (N_per_side, d-1)
-            low = D[mask, 0][np.newaxis, :]
-            high = D[mask, 1][np.newaxis, :]
-            face1[:, mask] = np.random.uniform(low=low, high=high, size=(N_per_side, d-1))
-            face2[:, mask] = np.random.uniform(low=low, high=high, size=(N_per_side, d-1))
+            low = D[mask, 0][jnp.newaxis, :]
+            high = D[mask, 1][jnp.newaxis, :]
+            face1[:, mask] = jnp.random.uniform(low=low, high=high, size=(N_per_side, d-1))
+            face2[:, mask] = jnp.random.uniform(low=low, high=high, size=(N_per_side, d-1))
             obs.append(face1)
             obs.append(face2)
-        obs_bnd = np.vstack(obs)
+        obs_bnd = jnp.vstack(obs)
 
     else:
         raise ValueError("Unsupported sampling method")
@@ -114,18 +115,18 @@ class Phi:
         """Evaluate phi(t)."""
         if self.gamma == 0:
             return t
-        return self.th * t + (1 - self.th) *  np.log(1 + self.gam * t) / self.gam
+        return self.th * t + (1 - self.th) *  jnp.log(1 + self.gam * t) / self.gam
 
     def dphi(self, t):
         """Evaluate derivative dphi(t)."""
         if self.gamma == 0:
-            return np.ones_like(t)
+            return jnp.ones_like(t)
         return self.th + (1 - self.th) / (1 + self.gam * t)
 
     def ddphi(self, t):
         """Evaluate second derivative ddphi(t)."""
         if self.gamma == 0:
-            return np.zeros_like(t)
+            return jnp.zeros_like(t)
         return -(1 - self.th) * self.gam / (1 + self.gam * t) ** 2
 
     def inv(self, y):
@@ -137,55 +138,53 @@ class Phi:
     def prox(self, sigma, g):
         """Evaluate proximity operator."""
         if self.gamma == 0:
-            return np.maximum(g - sigma, 0)
-        return 0.5 * np.maximum(
-            (g - sigma * self.th - 1 / self.gam) + np.sqrt((g - sigma * self.th - 1 / self.gam) ** 2 + 4 * (g - sigma) / self.gam),
+            return jnp.maximum(g - sigma, 0)
+        return 0.5 * jnp.maximum(
+            (g - sigma * self.th - 1 / self.gam) + jnp.sqrt((g - sigma * self.th - 1 / self.gam) ** 2 + 4 * (g - sigma) / self.gam),
             0
         )
 
-    
 
-def shapeParser(func, pad=False):
-    if not pad:
-        def wrapper(self, X, *args):
-            return func(self, X.shape, X, *args)
-    else:
-        def wrapper(self, X, s, c, *args):
-            pad_size = self.pad_size
-            N, d = X.shape  # Extract shape
-            _, s_dim = s.shape
-            X_padded = jnp.zeros((pad_size, d)).at[:N, :].set(X)  # Pad along first dim
-            s_padded = jnp.zeros((pad_size, s_dim)).at[:N, :].set(s)
-            c_padded = jnp.zeros(pad_size).at[:N].set(c)  # Pad along first dim
+def compute_rhs(p, x, s, c, xhat_int=None, xhat_bnd=None):
+    if xhat_int is None or xhat_bnd is None:
+        xhat_int = p.xhat_int
+        xhat_bnd = p.xhat_bnd
+    linear_results_int = p.kernel.linear_E_results_X_c_Xhat(x, s, c, xhat_int)
+    linear_results_bnd = p.kernel.linear_B_results_X_c_Xhat(x, s, c, xhat_bnd)
+    rhs_int = p.kernel.E_gauss_X_c_Xhat(*linear_results_int)
+    rhs_bnd = p.kernel.B_gauss_X_c_Xhat(*linear_results_bnd)
+    return jnp.hstack([rhs_int, rhs_bnd]), linear_results_int, linear_results_bnd
 
-            # Call the function and get the output
-            output = func(self, (pad_size, d), X_padded, s_padded, c_padded, *args)
 
-            def slice_arr(arr):
-                arr_shape = arr.shape
-                # if no dimension is padded, return the original array
-                if arr_shape[0] == pad_size:
-                    slice_sizes = (N,) + arr_shape[1:]
-                elif arr_shape[1] == pad_size:
-                    slice_sizes = (arr_shape[0], N) + arr_shape[2:]  
-                else:
-                    return arr 
-                arr_sliced = jax.lax.dynamic_slice(arr, (0,) * arr.ndim, slice_sizes)
+def compute_y(p, x, s, c, xhat_int=None, xhat_bnd=None, func=None):
+    if xhat_int is None or xhat_bnd is None:
+        xhat_int = p.xhat_int
+        xhat_bnd = p.xhat_bnd
+    if func is None:
+        func = p.kernel.gauss_X_c_Xhat
+    y_int = func(x, s, c, xhat_int)
+    y_bnd = func(x, s, c, xhat_bnd)
+    return y_int, y_bnd
 
-                return arr_sliced
-            
-            if type(output) == dict:
-                for key in output.keys():
-                    output[key] = slice_arr(output[key])
-                output_sliced = output
-            elif output.ndim == 1:
-                return output
-            else:
-                # output_sliced = output
-                output_sliced = slice_arr(output)
+def compute_errors(p, x, s, c, test_int=None, test_bnd=None, y_true_int=None, y_true_bnd=None):
+    if test_int is None or test_bnd is None:
+        test_int = p.test_int
+        test_bnd = p.test_bnd
+    if y_true_int is None or y_true_bnd is None:
+        y_true_int = p.ex_sol(test_int)
+        y_true_bnd = p.ex_sol(test_bnd)
+    len_test = test_bnd.shape[0] + test_int.shape[0]
+    y_pred_int, y_pred_bnd = compute_y(p, x, s, c, test_int, test_bnd)
+    l2_error = jnp.sqrt((jnp.sum((y_pred_int - y_true_int)**2) + jnp.sum((y_pred_bnd - y_true_bnd)**2)) * p.vol_D / len_test)
+    l_inf_error_int = jnp.max(jnp.abs(y_pred_int - y_true_int))
+    l_inf_error_bnd = jnp.max(jnp.abs(y_pred_bnd - y_true_bnd))
+    return {
+        'L_2': l2_error,
+        'L_inf_int': l_inf_error_int,
+        'L_inf_bnd': l_inf_error_bnd,
+        'L_inf': max(l_inf_error_int, l_inf_error_bnd)
+    }
 
-            return output_sliced
-    return wrapper
 
 
 

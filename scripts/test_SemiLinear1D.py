@@ -2,8 +2,8 @@ import sys
 sys.path.append("./")
 from pde.SemiLinear1D import PDE
 # from src.solver import solve
-from src.solver_active import solve
-# from src.solver_first_order import solve
+from src.solver import solve
+
 
 
 import numpy as np

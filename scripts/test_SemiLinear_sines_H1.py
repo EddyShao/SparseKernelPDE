@@ -1,12 +1,12 @@
 import sys
 sys.path.append("./")
 from pde.SemiLinearPDEH1 import PDE
-# from src.solver import solve
-from src.solver_active_h1 import solve
-# from src.solver_first_order import solve
+from src.solver_H1 import solve
+
 
 
 import numpy as np
+import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
 import os
@@ -116,9 +116,9 @@ if args.add_noise:
     rhs_mag = np.max(np.abs(rhs[:-p.Nx_bnd]))
     noise = np.random.randn(p.Nx) * 0.01 * rhs_mag
     rhs += noise
-rhs[-p.Nx_bnd:] = p.ex_sol(p.xhat_bnd)
+rhs = rhs.at[-p.Nx_bnd:].set(p.ex_sol(p.xhat_bnd))
 
-rhs = np.concatenate((rhs, np.zeros_like(rhs[-p.Nx_bnd:])))
+rhs = jnp.concatenate((rhs, jnp.zeros_like(rhs[-p.Nx_bnd:])))
 print(rhs.shape)
 
 rhs_test_int = p.f(p.test_int)

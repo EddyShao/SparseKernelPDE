@@ -3,9 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from src.GaussianKernel import GaussianKernel
-# from kernel.GaussianKernel_backup import GaussianKernel
-# from src.GaussianKernel_backup import GaussianKernel
-from src.utils import Objective, shapeParser, sample_cube_obs
+from src.utils import Objective, sample_cube_obs
 import jax
 import jax.numpy as jnp
 from functools import partial
@@ -22,16 +20,12 @@ class Kernel(GaussianKernel):
         self.D = D
 
         # linear results for computing E and B
-        self.linear_E = {
-            'Id': self.gauss_X_c_Xhat,
-        }
-        self.linear_B = {
-            'Id': self.gauss_X_c_Xhat,
-        }
+        self.linear_E = (self.gauss_X_c_Xhat,)
+        self.linear_B = (self.gauss_X_c_Xhat,)
 
         # linear results required for computing linearized E and B
-        self.DE = [] 
-        self.DB = []
+        self.DE = ()
+        self.DB = ()
 
     @partial(jax.jit, static_argnums=(0,))
     def gauss(self, x, s, xhat):
@@ -41,24 +35,19 @@ class Kernel(GaussianKernel):
             output = output * mask
         return output
 
-    @shapeParser
-    @partial(jax.jit, static_argnums=(0, 1))
-    def E_gauss_X_c(self, X_shape, X, S, c, xhat):
+    @partial(jax.jit, static_argnums=(0,))
+    def E_gauss_X_c(self, X, S, c, xhat):
         return self.gauss_X_c(X, S, c, xhat) 
 
-    @shapeParser
-    @partial(jax.jit, static_argnums=(0, 1))
-    def B_gauss_X_c(self, X_shape, X, S, c, xhat):
+    @partial(jax.jit, static_argnums=(0,))
+    def B_gauss_X_c(self, X, S, c, xhat):
         return self.gauss_X_c(X, S, c, xhat)
     
+    def E_gauss_X_c_Xhat(self, *linear_results):
+        return linear_results[0]
 
-    @partial(jax.jit, static_argnums=(0,))
-    def E_gauss_X_c_Xhat(self, **linear_results):
-        return linear_results['Id']
-
-    @partial(jax.jit, static_argnums=(0,))
-    def B_gauss_X_c_Xhat(self, **linear_results):
-        return linear_results['Id']
+    def B_gauss_X_c_Xhat(self, *linear_results):
+        return linear_results[0]
     
     @partial(jax.jit, static_argnums=(0,))
     def DE_gauss(self, x, s, xhat, *args):
@@ -83,15 +72,15 @@ class PDE:
         
         self.scale = alg_opt.get('scale', 1.0) # Domain size
         self.seed = alg_opt.get('seed', 200)
-        np.random.seed(self.seed)
+        self.key = jax.random.PRNGKey(self.seed)
 
 
         # domain for the input weights
-        self.D = np.array([
+        self.D = jnp.array([
                 [-1., 1.],
         ])
 
-        self.vol_D = np.prod(self.D[:, 1] - self.D[:, 0])
+        self.vol_D = jnp.prod(self.D[:, 1] - self.D[:, 0])
 
         self.anisotropic = alg_opt.get('anisotropic', False)
         self.kernel = Kernel(d=self.d, power=self.d+2.01, 
@@ -105,31 +94,33 @@ class PDE:
             self.dim = self.d + 1
 
 
-        self.Omega = np.array([
+        self.Omega = jnp.array([
             [-2.0, 2.0],
             [-10.0, 0.0],
         ])
         
         if self.anisotropic:
-            self.Omega = np.vstack([self.Omega[:self.d, :], np.tile(self.Omega[self.d, :], (self.d, 1))])
+            self.Omega = jnp.vstack([self.Omega[:self.d, :], jnp.tile(self.Omega[self.d, :], (self.d, 1))])
 
 
-
-        self.u_zero = {"x": np.zeros((0, self.d)), "s": np.zeros((0, self.dim-self.d)),  "u": np.zeros((0))} # initial solution for anisotropic
+        self.pad_size = 16
+        self.u_zero = {"x": jnp.zeros((self.pad_size, self.d)), 
+                       "s": jnp.zeros((self.pad_size, self.dim-self.d)),  
+                       "u": jnp.zeros((self.pad_size))} # initial solution for anisotropic
 
 
         # Observation set
         self.Nobs = alg_opt.get('Nobs', 50)
 
         self.xhat_int, self.xhat_bnd = self.sample_obs(self.Nobs, method=alg_opt.get('sampling', 'grid'))
-        self.xhat = np.vstack([self.xhat_int, self.xhat_bnd])
+        self.xhat = jnp.vstack([self.xhat_int, self.xhat_bnd])
         self.Nx_int = self.xhat_int.shape[0]
         self.Nx_bnd = self.xhat_bnd.shape[0]
         self.Nx = self.Nx_int + self.Nx_bnd
         # Optimization-related attributes
         self.obj = Objective(self.Nx_int, self.Nx_bnd, scale=1)
         # override objective function
-        self.obj.p_vec = np.ones((self.Nx, 1)) / self.Nx
+        self.obj.p_vec = jnp.ones((self.Nx, 1)) / self.Nx
         self.Ntest = 1000
 
         self.test_int, self.test_bnd = self.sample_obs(self.Ntest)
@@ -147,13 +138,16 @@ class PDE:
         method: 'uniform' or 'grid'
         """
         if method == 'grid':
-            obs_int = np.linspace(self.D[0, 0], self.D[0, 1], Nobs)[1:-1]
+            obs_int = jnp.linspace(self.D[0, 0], self.D[0, 1], Nobs)[1:-1]
             obs_int = obs_int.reshape(-1, 1)
         elif method == 'uniform':
-            obs_int = self.D[0, 0] + (self.D[0, 1] - self.D[0, 0]) * np.random.rand(Nobs-2, 1)
+            self.key, subkey = jax.random.split(self.key)
+            obs_int = self.D[0, 0] + (self.D[0, 1] - self.D[0, 0]) * jax.random.uniform(
+                subkey, shape=(Nobs - 2, 1)
+            )
         else:
             raise ValueError("Invalid method")
-        obs_bnd = np.array([
+        obs_bnd = jnp.array([
             [1.],
             [-1.],
         ])
@@ -163,31 +157,31 @@ class PDE:
         """
         Generates Ntarget random parameters in the desired parameter set.
         """
-        # randomx = self.Omega[0, 0] + (self.Omega[0, 1] - self.Omega[0, 0]) * np.random.rand(1, Ntarget)
-        
-        randomx = self.Omega[0, 0] + (self.Omega[:self.d, 1] - self.Omega[:self.d, 0]) * np.random.rand(Ntarget, self.d)
-        randoms = self.Omega[-1, 0] + (self.Omega[self.d:, 1] - self.Omega[self.d:, 0]) * np.tile(np.random.rand(Ntarget)[:, None], (1, self.dim-self.d))
+        self.key, subkey1, subkey2 = jax.random.split(self.key, 3)
+
+        randomx = self.Omega[0, 0] + (self.Omega[:self.d, 1] - self.Omega[:self.d, 0]) * jax.random.uniform(
+            subkey1, shape=(Ntarget, self.d)
+        )
+
+        randoms = self.Omega[-1, 0] + (self.Omega[self.d:, 1] - self.Omega[self.d:, 0]) * jnp.tile(
+            jax.random.uniform(subkey2, shape=(Ntarget, 1)), (1, self.dim - self.d)
+        )
 
         return randomx, randoms
 
-    def plot_forward(self, x, s, c):
+    def plot_forward(self, x, s, c, suppc):
         """
         Plots the forward solution.
         """
         """
         Plots the forward solution.
         """
-        # assert self.dim == 3 
-
-        # # Extract the domain range
-        # pO = self.Omega[:-1, :]
         plt.close('all')  # Close previous figure to prevent multiple windows
 
         # Create a new figure
         fig = plt.figure(figsize=(15, 5))
         ax1 = fig.add_subplot(111)
         t_x = np.linspace(self.D[0, 0], self.D[0, 1], self.Ntest)
-        # extend this to d-dimensions, by adding d - 1 zeros
         t = np.zeros((self.Ntest, self.d))
         t[:, 0] = t_x
 

@@ -1,9 +1,8 @@
 import sys
 sys.path.append("./")
 from pde.Eikonal import PDE
-# from src.solver import solve
-from src.solver_active import solve
-# from src.solver_first_order import solve
+from src.solver import solve
+from src.utils import Objective, compute_errors, compute_y, compute_rhs
 
 # Scipy
 import scipy.sparse
@@ -13,6 +12,7 @@ from scipy.interpolate import RegularGridInterpolator
 
 
 import numpy as np
+import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
 import os
@@ -59,11 +59,13 @@ p = PDE(alg_opts)
 p.name = 'EikonalRegularized'
 
 
-rhs = np.ones((p.Nx,))
-rhs[-p.Nx_bnd:] = 0.
+rhs = jnp.ones((p.Nx,))
+# rhs[-p.Nx_bnd:] = 0.
+rhs = rhs.at[-p.Nx_bnd:].set(0.)
 
-rhs_test = np.ones((p.test_int.shape[0] + p.test_bnd.shape[0],))
-rhs_test[-p.test_bnd.shape[0]:] = 0.
+rhs_test = jnp.ones((p.test_int.shape[0] + p.test_bnd.shape[0],))
+# rhs_test[-p.test_bnd.shape[0]:] = 0.
+rhs_test = rhs_test.at[-p.test_bnd.shape[0]:].set(0.)
 
 
 
@@ -123,7 +125,6 @@ p.ex_sol = u_true
 
 
 
-
 def evaluate_and_save_solution(p, rhs, alg_opts, args):
     """
     Solves the system, evaluates L_inf and L_2 error, pads solution history,
@@ -137,75 +138,51 @@ def evaluate_and_save_solution(p, rhs, alg_opts, args):
     """
     print()
     print('#' * 20)
-    # print(f'epsilon: {alg_opts["epsilon"]:.1e}')
-    print(f'alpha: {alg_opts["alpha"]:.1e}')
+    print('alpha:', alg_opts['alpha'])
     print('#' * 20)
     print()
     alg_out = solve(p, rhs, alg_opts)
 
-    # Define prediction function
-    u_pred = lambda xhat_vec: p.kernel.gauss_X_c_Xhat(
-        alg_out['xk'][-1],
-        alg_out['sk'][-1],
-        alg_out['ck'][-1],
-        xhat_vec
-    )
+    rhs_test = np.concatenate((p.f(p.test_int), p.ex_sol(p.test_bnd)))
+    p.obj_test = Objective(p.test_int.shape[0], p.test_bnd.shape[0], scale=alg_opts['scale'])
 
-    # Compute predictions and errors
-    u_pred_bnd_test = u_pred(p.test_bnd)
-    u_true_bnd_test = p.ex_sol(p.test_bnd)
-    u_pred_int_test = u_pred(p.test_int)
-    u_true_int_test = p.ex_sol(p.test_int)
-
-    L_inf_bnd_test = np.max(np.abs(u_pred_bnd_test - u_true_bnd_test))
-    L_inf_int_test = np.max(np.abs(u_pred_int_test - u_true_int_test))
-    L_2_test = np.sqrt(
-        (np.sum((u_pred_int_test - u_true_int_test)**2) + np.sum((u_pred_bnd_test - u_true_bnd_test)**2))
-        * p.vol_D / (p.test_int.shape[0] + p.test_bnd.shape[0])
-    )
-
-    u_pred_bnd_train = u_pred(p.xhat_bnd)
-    u_true_bnd_train = p.ex_sol(p.xhat_bnd)
-    u_pred_int_train = u_pred(p.xhat)
-    u_true_int_train = p.ex_sol(p.xhat)
-    L_inf_bnd_train = np.max(np.abs(u_pred_bnd_train - u_true_bnd_train))
-    L_inf_int_train = np.max(np.abs(u_pred_int_train - u_true_int_train))
-    L_2_train = np.sqrt(
-        (np.sum((u_pred_int_train - u_true_int_train)**2) + np.sum((u_pred_bnd_train - u_true_bnd_train)**2))
-        * p.vol_D / (p.xhat.shape[0] + p.xhat_bnd.shape[0])
-    ) 
-
+    # compute errors
+    errors_test = compute_errors(p, alg_out['xk'][-1], alg_out['sk'][-1], alg_out['ck'][-1],
+                            p.test_int, p.test_bnd)
+    errors_test = {k+'_test': v for k, v in errors_test.items()}
+    errors_train = compute_errors(p, alg_out['xk'][-1], alg_out['sk'][-1], alg_out['ck'][-1], 
+                                  p.xhat_int, p.xhat_bnd)
+    errors_train = {k+'_train': v for k, v in errors_train.items()}
+    
     # compute residue for both train and test
-
-    linear_results_int = p.kernel.linear_E_results_X_c_Xhat(alg_out['xk'][-1], alg_out['sk'][-1], alg_out['ck'][-1], p.xhat_int)
-    linear_results_bnd = p.kernel.linear_B_results_X_c_Xhat(alg_out['xk'][-1], alg_out['sk'][-1], alg_out['ck'][-1], p.xhat_bnd)
-    yk_int = p.kernel.E_gauss_X_c_Xhat(**linear_results_int)
-    yk_bnd = p.kernel.B_gauss_X_c_Xhat(**linear_results_bnd)
-    yk = np.hstack([yk_int, yk_bnd])
+    yk, _, _ = compute_rhs(p, alg_out['xk'][-1], alg_out['sk'][-1], alg_out['ck'][-1], p.xhat_int, p.xhat_bnd)
     misfit = yk - rhs
     residue_train = p.obj.F(misfit) 
 
-    linear_results_int_test = p.kernel.linear_E_results_X_c_Xhat(alg_out['xk'][-1], alg_out['sk'][-1], alg_out['ck'][-1], p.test_int)
-    linear_results_bnd_test = p.kernel.linear_B_results_X_c_Xhat(alg_out['xk'][-1], alg_out['sk'][-1], alg_out['ck'][-1], p.test_bnd)
-    yk_int_test = p.kernel.E_gauss_X_c_Xhat(**linear_results_int_test)
-    yk_bnd_test = p.kernel.B_gauss_X_c_Xhat(**linear_results_bnd_test)
-    yk_test = np.hstack([yk_int_test, yk_bnd_test])
+    yk_test, _, _ = compute_rhs(p, alg_out['xk'][-1], alg_out['sk'][-1], alg_out['ck'][-1], p.test_int, p.test_bnd)
     misfit_test = yk_test - rhs_test
     residue_test = p.obj_test.F(misfit_test)
 
     print()
     print('#' * 20)
-    # print(f'epsilon: {alg_opts["epsilon"]:.1e}')
     print(f'alpha: {alg_opts["alpha"]:.1e}')
-    print(f'L_inf error test (boundary): {L_inf_bnd_test:.2e}')
-    print(f'L_inf error test (interior): {L_inf_int_test:.2e}')
-    print(f'L_inf error test (total): {max(L_inf_bnd_test, L_inf_int_test):.2e}')
-    print(f'L_2 error test : {L_2_test:.2e}')
+    print(
+        "L_inf error test (boundary): {L_inf_bnd_test:.2e}\n"
+        "L_inf error test (interior): {L_inf_int_test:.2e}\n"
+        "L_inf error test (total): {L_inf_test:.2e}\n"
+        "L_2 error test: {L_2_test:.2e}".format(
+            **errors_test
+        )
+    )
     print(f'residue test: {residue_test:.2e}')
-    print(f'L_inf error train (boundary): {L_inf_bnd_train:.2e}')
-    print(f'L_inf error train (interior): {L_inf_int_train:.2e}')
-    print(f'L_inf error train (total): {max(L_inf_bnd_train, L_inf_int_train):.2e}')
-    print(f'L_2 error train: {L_2_train:.2e}')
+    print(
+        "L_inf error train (boundary): {L_inf_bnd_train:.2e}\n"
+        "L_inf error train (interior): {L_inf_int_train:.2e}\n"
+        "L_inf error train (total): {L_inf_train:.2e}\n"
+        "L_2 error train: {L_2_train:.2e}".format(
+            **errors_train
+        )
+    )
     print(f'residue train: {residue_train:.2e}')
     print(f'final support: {alg_out["supps"][-1]}')
     
@@ -213,18 +190,12 @@ def evaluate_and_save_solution(p, rhs, alg_opts, args):
     print()
 
     final_results = {
-        'L_inf_bnd_test': L_inf_bnd_test,
-        'L_inf_int_test': L_inf_int_test,
-        'L_inf_test': max(L_inf_bnd_test, L_inf_int_test),
-        'L_2_test': L_2_test,
         'residue_test': residue_test,
-        'L_inf_bnd_train': L_inf_bnd_train,
-        'L_inf_int_train': L_inf_int_train,
-        'L_inf_train': max(L_inf_bnd_train, L_inf_int_train),
-        'L_2_train': L_2_train,
         'residue_train': residue_train,
         'final_supp': alg_out['supps'][-1],
     }
+    final_results.update(errors_test)
+    final_results.update(errors_train)
 
     # Post-process alg_out
     num_iter = len(alg_out['sk'])
@@ -233,15 +204,17 @@ def evaluate_and_save_solution(p, rhs, alg_opts, args):
     xk_padded = np.zeros((num_iter, max_supp, p.d))
     sk_padded = np.zeros((num_iter, max_supp, p.dim - p.d))
     ck_padded = np.zeros((num_iter, max_supp))
-
+    suppc = np.zeros((num_iter, max_supp), dtype=bool)
     for i in range(num_iter):
         xk_padded[i, :alg_out['xk'][i].shape[0]] = alg_out['xk'][i]
         sk_padded[i, :alg_out['sk'][i].shape[0]] = alg_out['sk'][i]
         ck_padded[i, :alg_out['ck'][i].shape[0]] = alg_out['ck'][i]
+        suppc[i, :alg_out['suppc'][i].shape[0]] = alg_out['suppc'][i]
 
     alg_out['xk'] = xk_padded
     alg_out['sk'] = sk_padded
     alg_out['ck'] = ck_padded
+    alg_out['suppc'] = suppc
 
     # Combine with options and errors
     alg_out.update(alg_opts)
@@ -259,11 +232,11 @@ def evaluate_and_save_solution(p, rhs, alg_opts, args):
 for _ in range(3):
     # Solve the PDE and evaluate the solution
     alg_out = evaluate_and_save_solution(p, rhs, alg_opts, args)
-    supp = alg_out['supps'][-1]
+    suppc = alg_out['suppc'][-1]
     p.u_zero = {
-        'x': alg_out['xk'][-1, :supp, :],
-        's': alg_out['sk'][-1, :supp, :],
-        'u': alg_out['ck'][-1, :supp]
+        'x': alg_out['xk'][-1, :, :] * suppc[:, None],
+        's': alg_out['sk'][-1, :, :] * suppc[:, None],
+        'u': alg_out['ck'][-1, :] * suppc
     }
     
     alg_opts['alpha'] = 0.01 * alg_opts['alpha']

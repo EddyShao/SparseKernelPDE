@@ -3,82 +3,67 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from src.GaussianKernel import GaussianKernel
-# from kernel.GaussianKernel_backup import GaussianKernel
-# from src.GaussianKernel_backup import GaussianKernel
-from src.utils import Objective, shapeParser, sample_cube_obs
+from src.utils import Objective, sample_cube_obs
 import jax
 import jax.numpy as jnp
 from functools import partial
 jax.config.update("jax_enable_x64", True)
 
-# set the random seed
-
-
-    
 class Kernel(GaussianKernel):
-    def __init__(self, d, power, sigma_max, sigma_min, anisotropic=False, mask=False, D=None):
-        super().__init__(d=d, power=power, sigma_max=sigma_max, sigma_min=sigma_min, anisotropic=anisotropic)
-        self.mask = mask
-        self.D = D
+        def __init__(self, d, power, sigma_max, sigma_min, anisotropic=False, mask=False, D=None):
+            super().__init__(d=d, power=power, sigma_max=sigma_max, sigma_min=sigma_min, anisotropic=anisotropic)
+            self.mask = mask
+            self.D = D
 
-        # linear results for computing E and B
-        self.linear_E = {
-            'Id': self.gauss_X_c_Xhat,
-            'Lap': self.Lap_gauss_X_c_Xhat,
-        }
+            # linear results for computing E and B
+            self.linear_E = (self.gauss_X_c_Xhat, self.Lap_gauss_X_c_Xhat)
+            self.linear_B = (self.gauss_X_c_Xhat,)
+            self.DE = (0,) 
+            self.DB = ()     
 
-        self.linear_B = {
-            'Id': self.gauss_X_c_Xhat,
-        }
+        @partial(jax.jit, static_argnums=(0,))
+        def gauss(self, x, s, xhat):
+            # print('compiled')
+            output = super().gauss(x, s, xhat)
+            if self.mask:
+                mask = jnp.prod(xhat - self.D[:, 0]) * jnp.prod(self.D[:, 1] - xhat)
+                output = output * mask
+            return output
 
-        # linear results required for computing linearized E and B
-        self.DE = ['Id'] 
-        self.DB = []
 
-    @partial(jax.jit, static_argnums=(0,))
-    def gauss(self, x, s, xhat):
-        output = super().gauss(x, s, xhat)
-        if self.mask:
-            mask = jnp.prod(xhat - self.D[:, 0]) * jnp.prod(self.D[:, 1] - xhat)
-            output = output * mask
-        return output
-    
-    @shapeParser
-    @partial(jax.jit, static_argnums=(0, 1))
-    def Lap_gauss_X_c(self, X_shape, X, S, c, xhat):
-        return jnp.trace(jax.hessian(self.gauss_X_c, argnums=3)(X, S, c, xhat))
-    
-    @partial(shapeParser, pad=True)
-    @partial(jax.jit, static_argnums=(0, 1))
-    def Lap_gauss_X_c_Xhat(self, X_shape, X, S, c, Xhat): 
-        return jax.vmap(self.Lap_gauss_X_c, in_axes=(None, None, None, 0))(X, S, c, Xhat)
+        @partial(jax.jit, static_argnums=(0,))
+        def Lap_gauss_X_c(self, X, S, c, xhat):
+            # print('compiled')
+            return jnp.trace(jax.hessian(self.gauss_X_c, argnums=3)(X, S, c, xhat))
 
-    @shapeParser
-    @partial(jax.jit, static_argnums=(0, 1))
-    def E_gauss_X_c(self, X_shape, X, S, c, xhat):
-        return - self.Lap_gauss_X_c(X, S, c, xhat) + self.gauss_X_c(X, S, c, xhat) ** 3
 
-    @shapeParser
-    @partial(jax.jit, static_argnums=(0, 1))
-    def B_gauss_X_c(self, X_shape, X, S, c, xhat):
-        return self.gauss_X_c(X, S, c, xhat)
-    
+        @partial(jax.jit, static_argnums=(0,))
+        def Lap_gauss_X_c_Xhat(self, X, S, c, Xhat): 
+            return jax.vmap(self.Lap_gauss_X_c, in_axes=(None, None, None, 0))(X, S, c, Xhat)
 
-    @partial(jax.jit, static_argnums=(0,))
-    def E_gauss_X_c_Xhat(self, **linear_results):
-        return - linear_results['Lap'] + linear_results['Id'] ** 3
+        @partial(jax.jit, static_argnums=(0,))
+        def E_gauss_X_c(self, X, S, c, xhat):
+            return - self.Lap_gauss_X_c(X, S, c, xhat) + self.gauss_X_c(X, S, c, xhat) ** 3
 
-    @partial(jax.jit, static_argnums=(0,))
-    def B_gauss_X_c_Xhat(self, **linear_results):
-        return linear_results['Id']
-    
-    @partial(jax.jit, static_argnums=(0,))
-    def DE_gauss(self, x, s, xhat, *args):
-        return -jnp.trace(jax.hessian(self.gauss, argnums=2)(x, s, xhat)) + 3 * args[0] ** 2 * self.gauss(x, s, xhat)
+        @partial(jax.jit, static_argnums=(0,))
+        def B_gauss_X_c(self, X, S, c, xhat):
+            # print('compiled')
+            return self.gauss_X_c(X, S, c, xhat)
 
-    @partial(jax.jit, static_argnums=(0,))
-    def DB_gauss(self, x, s, xhat, *args):
-        return self.gauss(x, s, xhat)
+
+        def E_gauss_X_c_Xhat(self, *linear_results):
+            return - linear_results[1] + linear_results[0] ** 3
+
+        def B_gauss_X_c_Xhat(self, *linear_results):
+            return linear_results[0]
+
+        @partial(jax.jit, static_argnums=(0,))
+        def DE_gauss(self, x, s, xhat, *args):
+             return -jnp.trace(jax.hessian(self.gauss, argnums=2)(x, s, xhat)) + 3 * args[0] ** 2 * self.gauss(x, s, xhat)
+
+        @partial(jax.jit, static_argnums=(0,))
+        def DB_gauss(self, x, s, xhat, *args):
+            return self.gauss(x, s, xhat)
 
     
 class PDE:
@@ -96,49 +81,48 @@ class PDE:
         
         self.scale = alg_opt.get('scale', 1.0) # Domain size
         self.seed = alg_opt.get('seed', 200)
-        np.random.seed(self.seed)
+        self.key = jax.random.PRNGKey(self.seed)
 
 
         # domain for the input weights
-        self.D = np.array([
+        self.D = jnp.array([
                 [-1., 1.],
                 [-1., 1.],
         ])
 
-        self.vol_D = np.prod(self.D[:, 1] - self.D[:, 0])
+        self.vol_D = jnp.prod(self.D[:, 1] - self.D[:, 0])
 
         self.anisotropic = alg_opt.get('anisotropic', False)
         self.kernel = Kernel(d=self.d, power=self.d+2.01, 
                              mask=(self.scale<1e-8), D=self.D, 
                              anisotropic=self.anisotropic,
                              sigma_max=self.sigma_max, sigma_min=self.sigma_min)
-        
+        self.pad_size = 60
+         
         if self.anisotropic:
             self.dim = 2 * self.d # weight dimension
         else:
             self.dim = self.d + 1
 
 
-        self.Omega = np.array([
+        self.Omega = jnp.array([
             [-2.0, 2.0],
             [-2.0, 2.0],
             [-10.0, 0.0],
         ])
         
         if self.anisotropic:
-            self.Omega = np.vstack([self.Omega[:self.d, :], np.tile(self.Omega[self.d, :], (self.d, 1))])
+            self.Omega = jnp.vstack([self.Omega[:self.d, :], jnp.tile(self.Omega[self.d, :], (self.d, 1))])
 
         assert self.dim == self.Omega.shape[0] and self.d == self.Omega.shape[1]
 
 
-        self.u_zero = {"x": np.zeros((0, self.d)), "s": np.zeros((0, self.dim-self.d)),  "u": np.zeros((0))} # initial solution for anisotropic
-
-
+        self.u_zero = {"x": jnp.zeros((self.pad_size, self.d)), "s": jnp.zeros((self.pad_size, self.dim-self.d)),  "u": jnp.zeros((self.pad_size))} # initial solution for anisotropic
         # Observation set
         self.Nobs = alg_opt.get('Nobs', 50)
 
         self.xhat_int, self.xhat_bnd = self.sample_obs(self.Nobs, method=alg_opt.get('sampling', 'grid'))
-        self.xhat = np.vstack([self.xhat_int, self.xhat_bnd])
+        self.xhat = jnp.vstack([self.xhat_int, self.xhat_bnd])
         self.Nx_int = self.xhat_int.shape[0]
         self.Nx_bnd = self.xhat_bnd.shape[0]
         self.Nx = self.Nx_int + self.Nx_bnd
@@ -150,17 +134,17 @@ class PDE:
         self.obj_test = Objective(self.test_int.shape[0], self.test_bnd.shape[0], scale=self.scale)
     
     def f(self, x):
-        x = np.atleast_2d(x)  # Ensures x has shape (N, 2)
-        result = (2 * np.pi**2 * np.sin(np.pi * x[:, 0]) * np.sin(np.pi * x[:, 1]) + 
-                 16 * np.pi**2 * np.sin(2 * np.pi * x[:, 0]) * np.sin(2 * np.pi * x[:, 1]))
+        x = jnp.atleast_2d(x)  # Ensures x has shape (N, 2)
+        result = (2 * jnp.pi**2 * jnp.sin(jnp.pi * x[:, 0]) * jnp.sin(jnp.pi * x[:, 1]) + 
+                 16 * jnp.pi**2 * jnp.sin(2 * jnp.pi * x[:, 0]) * jnp.sin(2 * jnp.pi * x[:, 1]))
         result += self.ex_sol(x) ** 3
 
         return result if x.shape[0] > 1 else result[0]  # Return scalar if input was (2,)
 
     def ex_sol(self, x):
-        x = np.atleast_2d(x)  # Ensures x has shape (N, 2)
-        result = (np.sin(np.pi * x[:, 0]) * np.sin(np.pi * x[:, 1]) +
-                2*np.sin(2*np.pi * x[:, 0]) * np.sin(2 * np.pi * x[:, 1]))
+        x = jnp.atleast_2d(x)  # Ensures x has shape (N, 2)
+        result = (jnp.sin(jnp.pi * x[:, 0]) * jnp.sin(jnp.pi * x[:, 1]) +
+                2*jnp.sin(2*jnp.pi * x[:, 0]) * jnp.sin(2 * jnp.pi * x[:, 1]))
         return result if x.shape[0] > 1 else result[0]  # Return scalar if input was (2,)
 
     
@@ -177,17 +161,23 @@ class PDE:
         """
         Generates Ntarget random parameters in the desired parameter set.
         """
-        # randomx = self.Omega[0, 0] + (self.Omega[0, 1] - self.Omega[0, 0]) * np.random.rand(1, Ntarget)
-        
-        randomx = self.Omega[:self.d, 0] + (self.Omega[:self.d, 1] - self.Omega[:self.d, 0]) * np.random.rand(Ntarget, self.d)
-        randoms = self.Omega[-1, 0] + (self.Omega[self.d:, 1] - self.Omega[self.d:, 0]) * np.tile(np.random.rand(Ntarget)[:, None], (1, self.dim-self.d))
+        self.key, subkey1, subkey2 = jax.random.split(self.key, 3)
+
+        randomx = self.Omega[:self.d, 0] + (self.Omega[:self.d, 1] - self.Omega[:self.d, 0]) * \
+                  jax.random.uniform(subkey1, shape=(Ntarget, self.d))
+
+        randoms = self.Omega[-1, 0] + (self.Omega[self.d:, 1] - self.Omega[self.d:, 0]) * \
+                  jax.random.uniform(subkey2, shape=(Ntarget, self.dim - self.d))
+
 
         return randomx, randoms
 
-    def plot_forward(self, x, s, c):
+    def plot_forward(self, x, s, c, suppc=None):
         """
         Plots the forward solution.
         """
+        if suppc is None:
+            suppc = np.ones_like(c, dtype=bool)
         # assert self.dim == 3 
 
         # # Extract the domain range
@@ -199,14 +189,7 @@ class PDE:
         ax1 = fig.add_subplot(131, projection='3d')
         ax2 = fig.add_subplot(132, projection='3d')
         ax3 = fig.add_subplot(133)
-        # Manually set figure position on screen
-        # try:
-        #     fig_manager = plt.get_current_fig_manager()
-        #     fig_manager.window.wm_geometry("+100+100")  # Move window to (100, 100)
-        # except:
-        #     pass  # Some backends (e.g., inline Jupyter) may not support this
 
-        # Generate grid
         t_x = np.linspace(self.D[0, 0], self.D[0, 1], 100)
         t_y = np.linspace(self.D[1, 0], self.D[1, 1], 100)
         X, Y = np.meshgrid(t_x, t_y)
@@ -238,7 +221,7 @@ class PDE:
         # plot all collocation point X
         # together with error countour plot
         contour = ax3.contourf(X, Y, np.abs(Gu.reshape(100, 100) - f1), cmap='viridis')        
-        ax3.scatter(x[:, 0].flatten(), x[:, 1].flatten(), color='r', marker='x')
+        # ax3.scatter(x[:, 0].flatten(), x[:, 1].flatten(), color='r', marker='x')
         if self.anisotropic:
             for xi, yi, ai, bi in zip(x[:, 0].flatten(), x[:, 1].flatten(), sigma[:, 0].flatten(), sigma[:, 1].flatten()):
                 ellipse = patches.Ellipse((xi, yi), width=2*ai, height=2*bi,
@@ -246,9 +229,11 @@ class PDE:
                               linestyle='dashed', label="Reference ellipse")
                 ax3.add_patch(ellipse)
         else:
-            for xi, yi, r in zip(x[:, 0].flatten(), x[:, 1].flatten(), sigma.flatten()):
-                circle = plt.Circle((xi, yi), r, color='r', fill=False, linestyle='dashed', label="Reference circle")
-                ax3.add_patch(circle)
+            for xi, yi, r, ind in zip(x[:, 0].flatten(), x[:, 1].flatten(), sigma.flatten(), suppc):
+                if ind:
+                    circle = plt.Circle((xi, yi), r, color='r', fill=False, linestyle='dashed', label="Reference circle")
+                    ax3.scatter(xi, yi, color='r', marker='x')
+                    ax3.add_patch(circle)
 
         ax3.set_aspect('equal')  # Ensures circles are properly shaped
         # # set colorbars
