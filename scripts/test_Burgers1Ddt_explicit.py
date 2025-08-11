@@ -8,7 +8,6 @@ from src.solver import solve
 from scipy.interpolate import RegularGridInterpolator
 import jax.numpy as jnp
 import jax
-jax.config.update("jax_enable_x64", True)
 import time
 
 import numpy as np
