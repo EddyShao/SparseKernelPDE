@@ -336,7 +336,7 @@ def solve(p, y_ref, alg_opts):
             break
 
 
-        if jnp.sum(suppc) < pad_size // 3 and k >= 2:
+        if jnp.sum(suppc) < pad_size // 3 and k >= 100:
             pad_size_id -= 1
             if pad_size_id not in pad_size_dict:
                 pad_size_dict[pad_size_id] = max(pad_size // 2, 1)
