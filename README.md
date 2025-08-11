@@ -15,8 +15,7 @@ pip install -r requirements.txt
 - `GaussianKernel.py` defines the generic Gaussian Kernel.
 - `solver*.py` defines solvers for various usages. 
     * `solver.py`: generic solver;
-    * `solver_active.py`: Extends the generic solver with active point (block descent) functionality. Note: While this solver was primarily used in our experiments, the results reported in the paper do not utilize the active point feature.
-    * `solver_active_H1.py`: A variant of the solver that enforces boundary conditions using the $H^1$ norm.
+    * `solver_H1.py`: A variant of the solver that enforces boundary conditions using the $H^1$ norm.
 
 ### In the `pde` folder:
 We define the fundamental components of the PDE problem here, including domains ($D$ and $\Omega$), right-hand-side term, and exact solution; we also integrates specific $\mathcal{E}$ and $\mathcal{B}$ into the definition of Gaussian Kernel.
