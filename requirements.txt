@@ -1,5 +1,5 @@
-jax==0.4.30
-jaxlib==0.4.30
+jax==0.3.10
+jaxlib==0.3.10
 matplotlib==3.8.0
 numpy==1.26.0
 scipy==1.11.3
