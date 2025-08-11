@@ -10,12 +10,21 @@ The code is tested with Python 3.9. After activating your virtual environment, i
 pip install -r requirements.txt
 ```
 
-### JAX and CUDA Compatibilitys
+### JAX and CUDA Compatibilities
  
 This project was developed using JAX 0.3.10 with its corresponding CUDA/cuDNN build.
 In general, the software does not depend on a specific JAX version, as long as you install a JAX build that matches your CUDA version when running on GPU.
 
 In general, the software does not depend on a specific JAX version, as long as you install a JAX build that matches your CUDA version when running on GPU; please refer to the [official JAX installation guide](https://github.com/google/jax#installation) for the correct CUDA-enabled JAXLIB wheel.
+
+### GPU/CUDA support
+### GPU Support
+
+This version of the software uses **float64** (double precision) for computations to ensure numerical stability.  
+If you wish to achieve a substantial performance improvement on GPU compared to CPU, it is essential to use hardware with high double-precision throughput (e.g., NVIDIA A100, V100, or H100).  
+Most consumer-grade GPUs (e.g., RTX series) have significantly reduced FP64 performance and therefore may offer limited acceleration.
+
+We plan to optimize the algorithm for efficient **float32** (single-precision) execution in future releases.
 
 ## Code Structure
 ### In the `src` folder:
