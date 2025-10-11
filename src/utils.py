@@ -222,3 +222,45 @@ if __name__ == '__main__':
     # plt.legend()
     # plt.show()
 
+def merge_kernel_cluster(suppc, xk, sk, ck, p, tau=1.0):
+    # do merge of close points every 500 iterations
+    active = jnp.asarray(jnp.where(suppc)[0])
+    centers_ind = [[active[0]]]
+    coefs = [ck[active[0]]] 
+    centers = [xk[active[0], :]]
+    ss = [sk[active[0], :] if sk.ndim > 1 else sk[active[0]]]
+    for ind in active[1:]:
+        x = xk[ind, :]
+        s = sk[ind, :] if sk.ndim > 1 else sk[ind]
+        sig1 = p.kernel.sigma(s)
+        flag = False
+
+        for i, (center, s0) in enumerate(zip(centers, ss)):
+            sig0 = p.kernel.sigma(s0)
+            score = jnp.exp(-jnp.sum((x - center)**2) / (sig0**2 + sig1**2))
+            score *= jnp.exp( - jnp.sum((jnp.log(sig0) - jnp.log(sig1))**2) / (2 * tau**2))
+
+
+            if score > 0.8:
+                new_center = (len(centers_ind[i]) / (len(centers_ind[i])+1)) *  center + x / (len(centers_ind[i])+1)
+                new_s = (len(centers_ind[i]) / (len(centers_ind[i])+1)) *  s0 + s / (len(centers_ind[i])+1)
+                centers_ind[i].append(ind)
+                centers[i] = new_center
+                ss[i] = new_s
+                coefs[i] += ck[ind]
+                flag = True
+                break
+        if not flag:
+            centers.append(x)
+            ss.append(s)
+            centers_ind.append([ind])
+            coefs.append(ck[ind])
+    print("After merge, number of points reduced from {} to {}".format(jnp.sum(suppc), len(centers)))
+    
+    # reconstruct xk, sk, ck
+    ck = jnp.array(coefs)
+    # qk = jnp.sign(ck) + ck 
+    xk = jnp.array(centers)
+    sk = jnp.array(ss)
+
+    return xk, sk, ck

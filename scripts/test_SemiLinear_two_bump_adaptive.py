@@ -40,12 +40,20 @@ parser.add_argument('--add_noise', type=bool, default=False, help='Add noise to 
 parser.add_argument('--save_dir', type=str, default=None, help='Directory to save the output.')
 parser.add_argument('--save_idx', type=int, default=None, help='Index to save the output.')
 parser.add_argument('--T', type=float, default=300.0, help='Temperature for MCMC.')
+parser.add_argument('--solver', type=str, default='newton', help='Solver to use.')
 
 
 args = parser.parse_args()
 alg_opts = vars(args)
 
 print(alg_opts)
+
+if 'newton' in alg_opts['solver']:
+    from src.solver import solve
+elif 'first' in alg_opts['solver']:
+    from src.solver_first_order import solve
+else:
+    raise ValueError('Unknown solver type.')
 
 # comment out if you want to use the smooth transition function
 def ex_sol_help(x, center=(0.30, 0.30), k=8, R_0=0.2):
