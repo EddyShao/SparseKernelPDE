@@ -3,6 +3,8 @@ import jax.numpy as jnp
 import jax
 # jax.config.update("jax_enable_x64", True)
 from itertools import product
+import jax.numpy as jnp
+import jax.random 
 
 def computeProx(v, mu):
     """
@@ -61,44 +63,290 @@ class Objective:
         # return matrix Q^T @ ddF @ Q
         return Q.T @ (self.p_vec * Q)
     
-def sample_cube_obs(D, Nobs, method='grid'):
+# def sample_cube_obs(D, Nobs_int, Nobs_bnd, method='grid', rng=None):
+#     """
+#     Sample interior and boundary points from a d-D box.
+#     - Grid: builds a Cartesian grid with n points/axis so that (n-2)^d ≈ Nobs_int.
+#             Returns all interior/boundary points from that grid (counts may differ from requested).
+#     - Uniform: samples exactly Nobs_int interior and Nobs_bnd boundary points i.i.d.
+
+#     Args:
+#         D: (d, 2) array; row i is [low_i, high_i]
+#         Nobs_int: desired total interior points (used to pick grid density for 'grid')
+#         Nobs_bnd: desired total boundary points (only used in 'uniform')
+#         method: 'grid' or 'uniform'
+#         rng: optional jax.random.PRNGKey (used in 'uniform'); if None, jax.random.key(0)
+#     Returns:
+#         obs_int: (Ni, d)
+#         obs_bnd: (Nb, d)
+#     """
+#     d = D.shape[0]
+#     lows, highs = D[:, 0], D[:, 1]
+
+#     if method == 'grid':
+#         # Choose n points/axis so that (n-2)^d ≈ Nobs_int (and at least 1 interior if possible)
+#         n_axis = int(jnp.maximum(3, 2 + jnp.ceil(Nobs_int ** (1.0 / d))))
+#         axes = [jnp.linspace(lows[i], highs[i], n_axis) for i in range(d)]
+#         mesh = jnp.meshgrid(*axes, indexing='ij')
+#         pts = jnp.vstack([m.ravel() for m in mesh]).T  # (n_axis**d, d)
+
+#         # Boundary mask: any coordinate equals low or high (use isclose for numeric safety)
+#         is_low  = jnp.isclose(pts, lows[None, :])
+#         is_high = jnp.isclose(pts, highs[None, :])
+#         mask_bnd = jnp.any(is_low | is_high, axis=1)
+
+#         obs_bnd = pts[ mask_bnd]
+#         obs_int = pts[~mask_bnd]
+#         return obs_int, obs_bnd
+
+#     elif method == 'uniform':
+#         if rng is None:
+#             rng = jax.random.key(0)
+#         key_int, key_bnd = jax.random.split(rng, 2)
+
+#         # Interior: i.i.d. uniform in the open box
+#         eps = jnp.finfo(jnp.float32).eps
+#         lo_i = lows + eps
+#         hi_i = highs - eps
+#         obs_int = jax.random.uniform(key_int, (Nobs_int, d), minval=lo_i, maxval=hi_i)
+
+#         # Boundary: sample faces uniformly among 2d faces
+#         axes_idx = jax.random.randint(key_bnd, (Nobs_bnd,), 0, d)      # which axis is clamped
+#         key_side, key_rest = jax.random.split(key_bnd)
+#         sides = jax.random.bernoulli(key_side, p=0.5, shape=(Nobs_bnd,))  # 0=low, 1=high
+
+#         pts = jax.random.uniform(key_rest, (Nobs_bnd, d), minval=lo_i, maxval=hi_i)
+#         clamp_vals = jnp.where(sides[:, None] == 1, highs[None, :], lows[None, :])
+#         rows = jnp.arange(Nobs_bnd)
+#         pts = pts.at[rows, axes_idx].set(clamp_vals[rows, axes_idx])
+
+#         obs_bnd = pts
+#         return obs_int, obs_bnd
+
+#     else:
+#         raise ValueError("method must be 'grid' or 'uniform'")
+
+
+# ---------- Low-discrepancy helpers ----------
+def _van_der_corput(n, base):
+    v = 0.0
+    denom = 1.0
+    while n > 0:
+        n, rem = divmod(n, base)
+        denom *= base
+        v += rem / denom
+    return v
+
+def _first_primes(k):
+    # tiny prime list is enough for d<=10
+    primes = []
+    x = 2
+    while len(primes) < k:
+        for p in primes:
+            if x % p == 0:
+                break
+        else:
+            primes.append(x)
+        x += 1
+    return primes
+
+def halton_sequence(n, d):
+    bases = _first_primes(d)
+    idx = jnp.arange(1, n + 1)
+    # vectorized van-der-corput via vmap over python loop is awkward; do python loop—small n is fine
+    cols = []
+    for b in bases:
+        vals = jnp.array([_van_der_corput(int(i), b) for i in range(1, n + 1)])
+        cols.append(vals)
+    return jnp.stack(cols, axis=1)
+
+def hammersley_sequence(n, d):
+    # dim 0: i/n, others: van der Corput in first_primes(d-1)
+    bases = _first_primes(max(d - 1, 0))
+    i = jnp.arange(n)
+    cols = [i / n]
+    for b in bases:
+        vals = jnp.array([_van_der_corput(int(k + 1), b) for k in range(n)])
+        cols.append(vals)
+    return jnp.stack(cols[:d], axis=1)
+
+def sobol_2d(n):
+    # Simple 2D Sobol using direction numbers (good for demos)
+    # Source: standard 2D construction; no scrambling
+    def _sobol_point(i):
+        # i starts at 1
+        # x uses direction numbers v_j = 1/2, 1/4, 1/8, ...
+        # y uses primitive polynomial x^3 + x^2 + 1 -> direction ints [1,3,5]
+        x = 0
+        y = 0
+        # x
+        v = 0.5
+        ii = i
+        while ii:
+            if ii & 1:
+                x ^= v
+            ii >>= 1
+            v *= 0.5
+        # y
+        dirs = [0.5, 0.25, 0.75 * 0.25]  # quick-and-dirty set for illustration
+        ii = i
+        j = 0
+        while ii:
+            if ii & 1:
+                y ^= dirs[j] if j < len(dirs) else (0.5 ** (j + 1))
+            ii >>= 1
+            j += 1
+        return jnp.array([x, y])
+    return jnp.stack([_sobol_point(i) for i in range(1, n + 1)], axis=0)
+
+# ---------- Latin hypercube ----------
+def latin_hypercube(key, n, d):
+    # Build n points: for each dim, permute n strata
+    u = jax.random.uniform(key, (n, d))
+    # centers in each stratum
+    strata = (jnp.arange(n)[..., None] + u) / n  # (n, d)
+    # permute independently per dim
+    permuted = []
+    subkeys = jax.random.split(key, d)
+    for j in range(d):
+        perm = jax.random.permutation(subkeys[j], n)
+        permuted.append(strata[perm, j])
+    return jnp.stack(permuted, axis=1)
+
+# ---------- Utility ----------
+def _scale_to_box(unit_pts, D):
+    lows, highs = D[:, 0], D[:, 1]
+    return lows + unit_pts * (highs - lows)
+
+def _sample_boundary_uniform(key, D, N):
     d = D.shape[0]
-    if method == 'grid':
-        obs = []
-        for i in range(d):
-            obs.append(jnp.linspace(D[i, 0], D[i, 1], Nobs))  # Exclude boundaries
-        obs = jnp.meshgrid(*obs, indexing='ij')
-        obs = jnp.vstack([obs[i].flatten() for i in range(d)]).T
+    lows, highs = D[:, 0], D[:, 1]
+    eps = jnp.finfo(jnp.float32).eps
+    lo_i, hi_i = lows + eps, highs - eps
+    key_axis, key_side, key_rest = jax.random.split(key, 3)
+    axes_idx = jax.random.randint(key_axis, (N,), 0, d)
+    sides = jax.random.bernoulli(key_side, 0.5, (N,))
+    pts = jax.random.uniform(key_rest, (N, d), minval=lo_i, maxval=hi_i)
+    clamp_vals = jnp.where(sides[:, None] == 1, highs[None, :], lows[None, :])
+    rows = jnp.arange(N)
+    pts = pts.at[rows, axes_idx].set(clamp_vals[rows, axes_idx])
+    return pts
 
-        mask = jnp.any(jnp.isclose(obs, D[:, 0]) | jnp.isclose(obs, D[:, 1]), axis=1)
-        obs_int = obs[~mask]
-        obs_bnd = obs[mask]
+# ---------- Main API ----------
+def sample_cube_obs(
+    D, Nobs_int, Nobs_bnd, method="grid",
+    rng=None, residual_fn=None, alpha=2.0, topk_ratio=0.1
+):
+    """
+    Methods:
+      'grid'       : Cartesian grid (approx counts).
+      'uniform'    : i.i.d. uniform interior + uniform faces.
+      'lhs'        : Latin hypercube (interior) + uniform faces.
+      'halton'     : Halton seq (interior) + uniform faces.
+      'hammersley' : Hammersley seq (interior) + uniform faces.
+      'sobol2'     : 2D Sobol (interior) + uniform faces (only d=2).
+      'rad'        : Residual-based Adaptive Distribution (needs residual_fn).
+      'rar_d'      : Residual-based Adaptive Refinement with Distribution (needs residual_fn).
 
-    elif method == 'uniform':
-        obs_int  = D[:, 0] + (D[:, 1] - D[:, 0]) * jnp.random.rand((Nobs-2)**d, D.shape[0])
-        obs = []
-        d = D.shape[0]
-        N_per_side = (Nobs ** d - (Nobs-2) ** d) // (2 * d) + 1
+    Args:
+      D           : (d,2) box.
+      Nobs_int    : total interior points requested (exact for quasi/uniform; approx for grid).
+      Nobs_bnd    : total boundary points requested.
+      rng         : jax.random.PRNGKey, optional.
+      residual_fn : callable(x: (N,d)) -> residual magnitude (N,), used by 'rad' and 'rar_d'.
+      alpha       : RAD exponent (importance ∝ residual^alpha).
+      topk_ratio  : RAR-D: fraction of points to refine near top residuals.
+    """
+    if rng is None:
+        rng = jax.random.key(0)
+    d = D.shape[0]
+    lows, highs = D[:, 0], D[:, 1]
 
-        for i in range(D.shape[0]):
-            face1 = jnp.full((N_per_side, D.shape[0]), D[i, 0])
-            face2 = jnp.full((N_per_side, D.shape[0]), D[i, 1])
-            mask = jnp.arange(D.shape[0]) != i
-            # D[mask, 0] and D[mask, 1] have shape (d-1,)
-            # We add a new axis so that they broadcast to shape (N_per_side, d-1)
-            low = D[mask, 0][jnp.newaxis, :]
-            high = D[mask, 1][jnp.newaxis, :]
-            face1[:, mask] = jnp.random.uniform(low=low, high=high, size=(N_per_side, d-1))
-            face2[:, mask] = jnp.random.uniform(low=low, high=high, size=(N_per_side, d-1))
-            obs.append(face1)
-            obs.append(face2)
-        obs_bnd = jnp.vstack(obs)
+    # ---- Boundary sampling (shared) ----
+    key_int, key_bnd, key_aux = jax.random.split(rng, 3)
+    obs_bnd = _sample_boundary_uniform(key_bnd, D, Nobs_bnd)
+
+    # ---- Interior by method ----
+    if method == "grid":
+        n_axis = int(jnp.maximum(3, 2 + jnp.ceil(Nobs_int ** (1.0 / d))))
+        axes = [jnp.linspace(lows[i], highs[i], n_axis) for i in range(d)]
+        mesh = jnp.meshgrid(*axes, indexing="ij")
+        pts = jnp.vstack([m.ravel() for m in mesh]).T
+        is_low = jnp.isclose(pts, lows[None, :])
+        is_high = jnp.isclose(pts, highs[None, :])
+        obs_int = pts[~jnp.any(is_low | is_high, axis=1)]
+
+    elif method == "uniform":
+        eps = jnp.finfo(jnp.float32).eps
+        lo, hi = lows + eps, highs - eps
+        obs_int = jax.random.uniform(key_int, (Nobs_int, d), minval=lo, maxval=hi)
+
+    elif method == "lhs":
+        unit = latin_hypercube(key_int, Nobs_int, d)
+        obs_int = _scale_to_box(unit, D)
+
+    elif method == "halton":
+        unit = halton_sequence(Nobs_int, d)
+        obs_int = _scale_to_box(unit, D)
+        
+    elif method == "hammersley":
+        unit = hammersley_sequence(Nobs_int, d)
+        obs_int = _scale_to_box(unit, D)
+
+    elif method == "sobol2":
+        assert d == 2, "sobol2 only implemented for 2D demo."
+        unit = sobol_2d(Nobs_int)
+        obs_int = _scale_to_box(unit, D)
+
+    elif method in ("rad", "rar_d"):
+        if residual_fn is None:
+            raise ValueError(f"{method} requires residual_fn(x)->residual magnitude.")
+
+        # base pool (quasi-uniform) to evaluate residuals
+        base_N = max(Nobs_int, 5_000)  # pool size; tune as you like
+        unit_pool = halton_sequence(base_N, d)
+        pool = _scale_to_box(unit_pool, D)
+
+        # residuals & RAD weights
+        r = residual_fn(pool)  # shape (base_N,)
+        # stabilize: add epsilon
+        w = (r + 1e-12) ** alpha
+        w = w / jnp.sum(w)
+
+        if method == "rad":
+            idx = jax.random.choice(key_int, base_N, shape=(Nobs_int,), p=w, replace=True)
+            obs_int = pool[idx]
+
+        else:  # 'rar_d'
+            K = max(1, int(topk_ratio * base_N))
+            # top-K residual points
+            top_idx = jnp.argsort(-r)[:K]
+            top_pts = pool[top_idx]
+            # local refinement: jitter around top points
+            # draw M points near each top point
+            per = max(1, Nobs_int // K)
+            subkeys = jax.random.split(key_aux, K)
+            neigh = []
+            scale = 0.02 * (highs - lows)  # 2% box size; tune
+            for k in range(K):
+                eps = jax.random.normal(subkeys[k], (per, d)) * scale
+                cand = top_pts[k][None, :] + eps
+                # clamp back to box
+                cand = jnp.clip(cand, lows, highs)
+                neigh.append(cand)
+            neigh = jnp.vstack(neigh)
+            # mix with RAD samples to keep distributional coverage
+            mix_rad = max(0, Nobs_int - neigh.shape[0])
+            if mix_rad > 0:
+                idx = jax.random.choice(key_int, base_N, shape=(mix_rad,), p=w, replace=True)
+                obs_int = jnp.vstack([neigh, pool[idx]])[:Nobs_int]
+            else:
+                obs_int = neigh[:Nobs_int]
 
     else:
-        raise ValueError("Unsupported sampling method")
-    
-    return obs_int, obs_bnd
+        raise ValueError("Unknown method")
 
+    return obs_int, obs_bnd
 
 
 class Phi:
