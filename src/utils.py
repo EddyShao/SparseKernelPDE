@@ -56,6 +56,11 @@ class Objective:
         """Computes the Hessian (second derivative) of F(y)."""
         return jnp.diag(self.p_vec.flatten())
     
+    def ddF_quad(self, y, Q):
+        """Computes the Hessian-vector product q^{T} ddF(y) * q."""
+        # return matrix Q^T @ ddF @ Q
+        return Q.T @ (self.p_vec * Q)
+    
 def sample_cube_obs(D, Nobs, method='grid'):
     d = D.shape[0]
     if method == 'grid':
