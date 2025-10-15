@@ -2,7 +2,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-from src.GaussianKernel import GaussianKernel
+from src.Kernels import GaussianKernel
 # from kernel.GaussianKernel_backup import GaussianKernel
 # from src.GaussianKernel_backup import GaussianKernel
 from src.utils import Objective, sample_cube_obs
@@ -22,63 +22,63 @@ class Kernel(GaussianKernel):
         self.D = D
 
         # linear results for computing E and B
-        self.linear_E = (self.gauss_X_c_Xhat, self.Lap_gauss_X_c_Xhat)
+        self.linear_E = (self.kappa_X_c_Xhat, self.Lap_kappa_X_c_Xhat)
     
-        self.linear_B = (self.gauss_X_c_Xhat,)
+        self.linear_B = (self.kappa_X_c_Xhat,)
 
         self.DE = (0,) 
         self.DB = ()   
 
     @partial(jax.jit, static_argnums=(0,))
-    def gauss(self, x, s, xhat):
-        output = super().gauss(x, s, xhat)
+    def kappa(self, x, s, xhat):
+        output = super().kappa(x, s, xhat)
         if self.mask:
             mask = jnp.prod(xhat - self.D[:, 0]) * jnp.prod(self.D[:, 1] - xhat)
             output = output * mask
         return output
     
     @partial(jax.jit, static_argnums=(0,))
-    def Lap_gauss_X_c(self, X, S, c, xhat):
-        # return jnp.trace(jax.hessian(self.gauss_X_c, argnums=3)(X, S, c, xhat))
+    def Lap_kappa_X_c(self, X, S, c, xhat):
+        # return jnp.trace(jax.hessian(self.kappa_X_c, argnums=3)(X, S, c, xhat))
         diff = X - xhat
         squared_diff = jnp.sum(diff ** 2, axis=1)
         sigma = self.sigma(S).squeeze()
         temp =  (squared_diff - self.d * sigma**2) / sigma ** 4
-        lap_phis =  self.gauss_X(X, S, xhat) * temp
+        lap_phis =  self.kappa_X(X, S, xhat) * temp
 
         return jnp.dot(c, lap_phis)
         
     @partial(jax.jit, static_argnums=(0,))
-    def Lap_gauss_X_c_Xhat(self, X, S, c, Xhat): 
-        return jax.vmap(self.Lap_gauss_X_c, in_axes=(None, None, None, 0))(X, S, c, Xhat)
+    def Lap_kappa_X_c_Xhat(self, X, S, c, Xhat): 
+        return jax.vmap(self.Lap_kappa_X_c, in_axes=(None, None, None, 0))(X, S, c, Xhat)
 
     @partial(jax.jit, static_argnums=(0,))
-    def E_gauss_X_c(self, X, S, c, xhat):
-        return - self.Lap_gauss_X_c(X, S, c, xhat) + self.gauss_X_c(X, S, c, xhat) ** 3
+    def E_kappa_X_c(self, X, S, c, xhat):
+        return - self.Lap_kappa_X_c(X, S, c, xhat) + self.kappa_X_c(X, S, c, xhat) ** 3
 
     @partial(jax.jit, static_argnums=(0,))
-    def B_gauss_X_c(self, X, S, c, xhat):
-        return self.gauss_X_c(X, S, c, xhat)
+    def B_kappa_X_c(self, X, S, c, xhat):
+        return self.kappa_X_c(X, S, c, xhat)
     
 
-    def E_gauss_X_c_Xhat(self, *linear_results):
+    def E_kappa_X_c_Xhat(self, *linear_results):
         return - linear_results[1] + linear_results[0] ** 3
 
-    def B_gauss_X_c_Xhat(self, *linear_results):
+    def B_kappa_X_c_Xhat(self, *linear_results):
         return linear_results[0]
     
     @partial(jax.jit, static_argnums=(0,))
-    def DE_gauss(self, x, s, xhat, *args):
-        # return jnp.trace(jax.hessian(self.gauss_X_c, argnums=3)(X, S, c, xhat))
+    def DE_kappa(self, x, s, xhat, *args):
+        # return jnp.trace(jax.hessian(self.kappa_X_c, argnums=3)(X, S, c, xhat))
         diff = x - xhat
         squared_diff = jnp.sum(diff ** 2)
         sigma = self.sigma(s).squeeze()
         temp =  (squared_diff - self.d * sigma**2) / sigma ** 4
-        return  - self.gauss(x, s, xhat) * temp + 3 * args[0] ** 2 * self.gauss(x, s, xhat)
+        return  - self.kappa(x, s, xhat) * temp + 3 * args[0] ** 2 * self.kappa(x, s, xhat)
         
     @partial(jax.jit, static_argnums=(0,))
-    def DB_gauss(self, x, s, xhat, *args):
-        return self.gauss(x, s, xhat)
+    def DB_kappa(self, x, s, xhat, *args):
+        return self.kappa(x, s, xhat)
 
     
 class PDE:

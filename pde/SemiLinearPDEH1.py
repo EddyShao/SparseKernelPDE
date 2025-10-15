@@ -21,31 +21,31 @@ class Kernel(GaussianKernel):
         self.D = D
 
         # linear results for computing E and B
-        self.linear_E = (self.gauss_X_c_Xhat, self.Lap_gauss_X_c_Xhat)
-        self.linear_B = (self.gauss_X_c_Xhat, self.nabla_n_gauss_X_c_Xhat)
+        self.linear_E = (self.kappa_X_c_Xhat, self.Lap_kappa_X_c_Xhat)
+        self.linear_B = (self.kappa_X_c_Xhat, self.nabla_n_kappa_X_c_Xhat)
         self.DE = (0,) 
         self.DB = ()
 
     @partial(jax.jit, static_argnums=(0,))
-    def gauss(self, x, s, xhat):
-        output = super().gauss(x, s, xhat)
+    def kappa(self, x, s, xhat):
+        output = super().kappa(x, s, xhat)
         if self.mask:
             mask = jnp.prod(xhat - self.D[:, 0]) * jnp.prod(self.D[:, 1] - xhat)
             output = output * mask
         return output
     
     @partial(jax.jit, static_argnums=(0,))
-    def Lap_gauss_X_c(self, X, S, c, xhat):
-        return jnp.trace(jax.hessian(self.gauss_X_c, argnums=3)(X, S, c, xhat))
+    def Lap_kappa_X_c(self, X, S, c, xhat):
+        return jnp.trace(jax.hessian(self.kappa_X_c, argnums=3)(X, S, c, xhat))
     
     @partial(jax.jit, static_argnums=(0,))
-    def Lap_gauss_X_c_Xhat(self, X, S, c, Xhat): 
-        return jax.vmap(self.Lap_gauss_X_c, in_axes=(None, None, None, 0))(X, S, c, Xhat)
+    def Lap_kappa_X_c_Xhat(self, X, S, c, Xhat): 
+        return jax.vmap(self.Lap_kappa_X_c, in_axes=(None, None, None, 0))(X, S, c, Xhat)
     
     @partial(jax.jit, static_argnums=(0,))
-    def nabla_n_gauss_X_c(self, X, S, c, xhat):
-        # Compute the gradient of B_gauss_X_c with respect to xhat
-        nabla = jax.grad(self.gauss_X_c, argnums=3)(X, S, c, xhat)
+    def nabla_n_kappa_X_c(self, X, S, c, xhat):
+        # Compute the gradient of B_kappa_X_c with respect to xhat
+        nabla = jax.grad(self.kappa_X_c, argnums=3)(X, S, c, xhat)
 
         # Determine if xhat is on the boundary in the first coordinate (axis 0)
         # and in the second coordinate (axis 1)
@@ -67,51 +67,51 @@ class Kernel(GaussianKernel):
         return jnp.dot(nabla, direction)
     
     @partial(jax.jit, static_argnums=(0,))
-    def nabla_n_gauss_X_c_Xhat(self, X, S, c, Xhat):
-        return jax.vmap(self.nabla_n_gauss_X_c, in_axes=(None, None, None, 0))(X, S, c, Xhat)
+    def nabla_n_kappa_X_c_Xhat(self, X, S, c, Xhat):
+        return jax.vmap(self.nabla_n_kappa_X_c, in_axes=(None, None, None, 0))(X, S, c, Xhat)
     
 
     @partial(jax.jit, static_argnums=(0,))
-    def E_gauss_X_c(self, X, S, c, xhat):
-        return - self.Lap_gauss_X_c(X, S, c, xhat) + self.gauss_X_c(X, S, c, xhat) ** 3
+    def E_kappa_X_c(self, X, S, c, xhat):
+        return - self.Lap_kappa_X_c(X, S, c, xhat) + self.kappa_X_c(X, S, c, xhat) ** 3
 
     @partial(jax.jit, static_argnums=(0,))
-    def B_gauss_X_c(self, X, S, c, xhat):
-        return self.gauss_X_c(X, S, c, xhat)
+    def B_kappa_X_c(self, X, S, c, xhat):
+        return self.kappa_X_c(X, S, c, xhat)
     
     @partial(jax.jit, static_argnums=(0,))
-    def B_aux_gauss_X_c(self, X, S, c, xhat):
-        return self.nabla_n_gauss_X_c(X, S, c, xhat)
+    def B_aux_kappa_X_c(self, X, S, c, xhat):
+        return self.nabla_n_kappa_X_c(X, S, c, xhat)
 
-    def E_gauss_X_c_Xhat(self, *linear_results):
+    def E_kappa_X_c_Xhat(self, *linear_results):
         return - linear_results[1] + linear_results[0] ** 3
 
-    def B_gauss_X_c_Xhat(self, *linear_results):
+    def B_kappa_X_c_Xhat(self, *linear_results):
         return linear_results[0]
     
-    def B_aux_gauss_X_c_Xhat(self, *linear_results):
+    def B_aux_kappa_X_c_Xhat(self, *linear_results):
         return linear_results[1]
     
     @partial(jax.jit, static_argnums=(0,))
-    def Grad_B_aux_gauss_X_c(self, X, S, c, xhat):
-        grads = jax.grad(self.B_aux_gauss_X_c, argnums=(0, 1, 2))(X, S, c, xhat)
+    def Grad_B_aux_kappa_X_c(self, X, S, c, xhat):
+        grads = jax.grad(self.B_aux_kappa_X_c, argnums=(0, 1, 2))(X, S, c, xhat)
         return {'grad_X': grads[0], 'grad_S': grads[1], 'grad_c': grads[2]}
     
     @partial(jax.jit, static_argnums=(0,))
-    def Grad_B_aux_gauss_X_c_Xhat(self, X, S, c, Xhat):
-        return jax.tree_util.tree_map(lambda g: jax.vmap(lambda xh: g(X, S, c, xh))(Xhat), self.Grad_B_aux_gauss_X_c)
+    def Grad_B_aux_kappa_X_c_Xhat(self, X, S, c, Xhat):
+        return jax.tree_util.tree_map(lambda g: jax.vmap(lambda xh: g(X, S, c, xh))(Xhat), self.Grad_B_aux_kappa_X_c)
     
     @partial(jax.jit, static_argnums=(0,))
-    def DE_gauss(self, x, s, xhat, *args):
-        return -jnp.trace(jax.hessian(self.gauss, argnums=2)(x, s, xhat)) + 3 * args[0] ** 2 * self.gauss(x, s, xhat)
+    def DE_kappa(self, x, s, xhat, *args):
+        return -jnp.trace(jax.hessian(self.kappa, argnums=2)(x, s, xhat)) + 3 * args[0] ** 2 * self.kappa(x, s, xhat)
 
     @partial(jax.jit, static_argnums=(0,))
-    def DB_gauss(self, x, s, xhat, *args):
-        return self.gauss(x, s, xhat)
+    def DB_kappa(self, x, s, xhat, *args):
+        return self.kappa(x, s, xhat)
     
     @partial(jax.jit, static_argnums=(0,))
-    def DB_aux_gauss(self, x, s, xhat, *args):
-        nabla = jax.grad(self.gauss, argnums=2)(x, s, xhat)
+    def DB_aux_kappa(self, x, s, xhat, *args):
+        nabla = jax.grad(self.kappa, argnums=2)(x, s, xhat)
         tol = 1e-6
         is_boundary_first = jnp.any(jnp.isclose(xhat[0], jnp.array(self.D[0, :]), atol=tol))
 
@@ -128,11 +128,11 @@ class Kernel(GaussianKernel):
         return jnp.dot(nabla, direction)
     
     @partial(jax.jit, static_argnums=(0,))
-    def DB_aux_gauss_X(self, X, S, xhat, *args):
-        return jax.vmap(self.DB_aux_gauss, in_axes=(0, 0, None) + (None,)*len(args))(X, S, xhat, *args)
+    def DB_aux_kappa_X(self, X, S, xhat, *args):
+        return jax.vmap(self.DB_aux_kappa, in_axes=(0, 0, None) + (None,)*len(args))(X, S, xhat, *args)
 
     @partial(jax.jit, static_argnums=(0,))
-    def DB_aux_gauss_X_Xhat(self, X, S, Xhat, *linear_results):
+    def DB_aux_kappa_X_Xhat(self, X, S, Xhat, *linear_results):
         """
         Compute the linearized PDE operator of the Gaussian kernel at u.
         """
@@ -140,7 +140,7 @@ class Kernel(GaussianKernel):
         for key in self.DB:
             args.append(linear_results[key])
             
-        return jax.vmap(self.DB_aux_gauss_X, in_axes=(None, None, 0)+(0,)*len(args))(X, S, Xhat, *args)
+        return jax.vmap(self.DB_aux_kappa_X, in_axes=(None, None, 0)+(0,)*len(args))(X, S, Xhat, *args)
 
     
 class PDE:
@@ -284,7 +284,7 @@ class PDE:
         fig.colorbar(surf1, ax=ax1, shrink=0.5, aspect=5)
 
         # Compute predicted solution
-        Gu = self.kernel.gauss_X_c_Xhat(x, s, c, t)
+        Gu = self.kernel.kappa_X_c_Xhat(x, s, c, t)
         # sigma is sigmoid of S
         sigma = self.kernel.sigma(s)
 
@@ -354,10 +354,10 @@ class PDE:
 #     # # build the meshgrid
 #     # t1, t2 = np.meshgrid(t_1, t_2)
 #     # t = np.vstack((t1.flatten(), t2.flatten()))
-#     # k, dk, gauss = p.k(t, x)       
+#     # k, dk, kappa = p.k(t, x)       
 #     # print(k.shape)
 #     # print(dk.shape)
-#     # print(gauss.shape)
+#     # print(kappa.shape)
 
 
 

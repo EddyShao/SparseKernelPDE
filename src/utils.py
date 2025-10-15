@@ -156,8 +156,8 @@ def compute_rhs(p, x, s, c, xhat_int=None, xhat_bnd=None):
         xhat_bnd = p.xhat_bnd
     linear_results_int = p.kernel.linear_E_results_X_c_Xhat(x, s, c, xhat_int)
     linear_results_bnd = p.kernel.linear_B_results_X_c_Xhat(x, s, c, xhat_bnd)
-    rhs_int = p.kernel.E_gauss_X_c_Xhat(*linear_results_int)
-    rhs_bnd = p.kernel.B_gauss_X_c_Xhat(*linear_results_bnd)
+    rhs_int = p.kernel.E_kappa_X_c_Xhat(*linear_results_int)
+    rhs_bnd = p.kernel.B_kappa_X_c_Xhat(*linear_results_bnd)
     return jnp.hstack([rhs_int, rhs_bnd]), linear_results_int, linear_results_bnd
 
 
@@ -166,7 +166,7 @@ def compute_y(p, x, s, c, xhat_int=None, xhat_bnd=None, func=None):
         xhat_int = p.xhat_int
         xhat_bnd = p.xhat_bnd
     if func is None:
-        func = p.kernel.gauss_X_c_Xhat
+        func = p.kernel.kappa_X_c_Xhat
     y_int = func(x, s, c, xhat_int)
     y_bnd = func(x, s, c, xhat_bnd)
     return y_int, y_bnd

@@ -112,15 +112,15 @@ def solve(p, y_ref, alg_opts):
     MCMC_key = jax.random.PRNGKey(p.seed) # set random key for Metropolis-Hastings algorithm
     
     for k in range(1, max_step  + 1):
-        Grad_E = p.kernel.Grad_E_gauss_X_c_Xhat(xk, sk, ck, p.xhat_int)
-        Grad_B = p.kernel.Grad_B_gauss_X_c_Xhat(xk, sk, ck, p.xhat_bnd)
+        Grad_E = p.kernel.Grad_E_kappa_X_c_Xhat(xk, sk, ck, p.xhat_int)
+        Grad_B = p.kernel.Grad_B_kappa_X_c_Xhat(xk, sk, ck, p.xhat_bnd)
         
-        Dc_E_gauss, Dx_E_gauss, Ds_E_gauss = Grad_E['grad_c'], Grad_E['grad_X'], Grad_E['grad_S']
-        Dc_B_gauss, Dx_B_gauss, Ds_B_gauss = Grad_B['grad_c'], Grad_B['grad_X'], Grad_B['grad_S']
+        Dc_E_kappa, Dx_E_kappa, Ds_E_kappa = Grad_E['grad_c'], Grad_E['grad_X'], Grad_E['grad_S']
+        Dc_B_kappa, Dx_B_kappa, Ds_B_kappa = Grad_B['grad_c'], Grad_B['grad_X'], Grad_B['grad_S']
         
-        Gp_c = jnp.vstack([jnp.array(Dc_E_gauss), jnp.array(Dc_B_gauss)])
-        Gp_x = jnp.vstack([jnp.array(Dx_E_gauss), jnp.array(Dx_B_gauss)])
-        Gp_s = jnp.vstack([jnp.array(Ds_E_gauss), jnp.array(Ds_B_gauss)])
+        Gp_c = jnp.vstack([jnp.array(Dc_E_kappa), jnp.array(Dc_B_kappa)])
+        Gp_x = jnp.vstack([jnp.array(Dx_E_kappa), jnp.array(Dx_B_kappa)])
+        Gp_s = jnp.vstack([jnp.array(Ds_E_kappa), jnp.array(Ds_B_kappa)])
         
         if Gp_s.ndim == 2:
             Gp_s = Gp_s[:, :, None]
@@ -239,8 +239,8 @@ def solve(p, y_ref, alg_opts):
     
         omegas_x, omegas_s = p.sample_param(Ntrial)
 
-        K_test_int = p.kernel.DE_gauss_X_Xhat(omegas_x, omegas_s, p.xhat_int, *linear_results_int)
-        K_test_bnd = p.kernel.DB_gauss_X_Xhat(omegas_x, omegas_s, p.xhat_bnd, *linear_results_bnd)
+        K_test_int = p.kernel.DE_kappa_X_Xhat(omegas_x, omegas_s, p.xhat_int, *linear_results_int)
+        K_test_bnd = p.kernel.DB_kappa_X_Xhat(omegas_x, omegas_s, p.xhat_bnd, *linear_results_bnd)
 
         K_test = jnp.vstack([K_test_int, K_test_bnd])
         eta = (1 / alpha) * K_test.T @ obj.dF(misfit) 
