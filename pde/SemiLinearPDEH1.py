@@ -2,7 +2,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-from src.GaussianKernel import GaussianKernel
+from src.Kernels import GaussianKernel
 from src.utils import Objective, sample_cube_obs
 import jax
 import jax.numpy as jnp
