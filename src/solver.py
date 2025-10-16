@@ -50,6 +50,7 @@ def solve(p, y_ref, alg_opts):
     plot_final = alg_opts.get('plot_final', True)
     plot_every = alg_opts.get('plot_every', 0)
     print_every = alg_opts.get('print_every', 20)
+    MAX_VAR  = alg_opts.get('MAX_VAR', 1000)
 
     Ntrial = alg_opts.get('Ntrial', 1000)
     T = alg_opts.get('T', 300)
@@ -128,10 +129,10 @@ def solve(p, y_ref, alg_opts):
         
         # We optimize over qk, xk, and sk
         Gp = jnp.hstack([Gp_c, shape_dK(Gp_xs)])
-        Gp = Gp * suppGp[None, :] # only keep the active points
-
+        Gp = Gp * suppGp[None, :] # only keep the active points #### TODO: ADD ACTIVE POINTS SETTING ####
 
         compact_ind = jnp.argsort(~suppGp) # index used to shift all the active points to the front
+        compact_ind = compact_ind[:MAX_VAR]
         inv_compact_ind = jnp.argsort(compact_ind) # index used to shift all the active points back to the original order
       
         Gp_compact = Gp[:, compact_ind] # compacted gradient matrix 
@@ -147,8 +148,9 @@ def solve(p, y_ref, alg_opts):
         # # This is a sanity check, it should be always true, otherwise the support definition is incorrect
         # assert jnp.all(jnp.abs(R[int((dim+1)*jnp.sum(suppc)):, :]) < 1e-14), "The lower trunk of R is not zero, check the support definition."  s
 
-        SI = obj.ddF(misfit)
-        II = Gp_compact.T @ SI @ Gp_compact # Approximate Hessian 
+        # SI = obj.ddF(misfit)
+        # # II = Gp_compact.T @ SI @ Gp_compact # Approximate Hessian 
+        II = obj.ddF_quad(misfit, Gp_compact) # Approximate Hessian
 
 
         kpp = 0.1 * jnp.linalg.norm(obj.dF(misfit), 1) * jnp.reshape(
@@ -177,9 +179,10 @@ def solve(p, y_ref, alg_opts):
         DDphi = jnp.diag(DDphi_diag_compact)
 
         try:
-            DR = HH @ DP + DDphi @ DP + (jnp.eye(pad_size*(1+dim)) - DP)
+            DR = HH @ DP + DDphi @ DP + (jnp.eye(HH.shape[0]) - DP)
             dz = - jnp.linalg.solve(DR, R)
             dz = dz.flatten()
+
         except:
             try:
                 DR = HH @ DP + (jnp.eye(pad_size*(1+dim)) - DP)
@@ -201,8 +204,9 @@ def solve(p, y_ref, alg_opts):
         theta = min(theta_old * 2, 1 - 1e-14) 
         has_descent = False
 
-        dz = dz[inv_compact_ind] # reorder dz to the original order
-        dz = dz * suppGp # only keep the active points
+        # dz = dz[inv_compact_ind] # reorder dz to the original order
+        dz = jnp.zeros(suppGp.shape[0]).at[compact_ind].set(dz) # reorder dz to the original order
+        dz = dz * suppGp # only keep the active points redundant, but safe
         while not has_descent and theta > 1e-20:
             qk = qold + theta * dz[:pad_size]
             dxs = dz[pad_size:].reshape(dim, -1).T
@@ -281,6 +285,17 @@ def solve(p, y_ref, alg_opts):
         tresh_y = jnp.sqrt(jnp.sum(grad_supp_y.reshape(dim, -1) ** 2, axis=0))
 
         tresh = tresh_c +  insertion_coef * tresh_y
+        # sort ck&xk's indices first based on tresh
+        sorted_ind = jnp.argsort(-tresh.flatten())
+        tresh = tresh[0, sorted_ind]
+        ck = ck[sorted_ind]
+        qk = qk[sorted_ind]
+        xk = xk[sorted_ind]
+        sk = sk[sorted_ind] if sk.ndim == 1 else sk[sorted_ind, :]
+        suppc = suppc[sorted_ind]
+        suppGp = jnp.tile(suppc, dim+1)
+
+
 
         # Metropolis-Hastings step
         annealing = - 3 * jnp.log10(alpha) * jnp.max(jnp.abs(misfit)) / (jnp.max(jnp.abs(y_ref))) # A Heuristic annealing coefficient
@@ -358,6 +373,18 @@ def solve(p, y_ref, alg_opts):
             suppc = jnp.pad(suppc, (0, pad_size - len(suppc)), constant_values=False)
             suppGp = jnp.tile(suppc, dim+1)
             print(f"\n#### PAD_SIZE decreased to {pad_size}, RECOMPILING: {recompile} ####\n")
+
+            # update xhat_int and xhat_bnd, resampling
+        
+        p.xhat_int, p.xhat_bnd = p.sample_obs(p.Nobs, method=alg_opts.get('sampling', 'uniform'))
+        # recompute j due to resampling
+        y_ref = p.f(p.xhat)
+        y_ref = y_ref.at[-p.Nx_bnd:].set(p.ex_sol(p.xhat_bnd))
+
+        yk, linear_results_int, linear_results_bnd = compute_rhs(p, xk, sk, ck)
+        misfit = yk - y_ref
+        j = obj.F(misfit)/alpha + jnp.sum(phi.phi(norms_c)) 
+            
 
     
     if plot_final:
