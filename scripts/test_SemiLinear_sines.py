@@ -21,7 +21,7 @@ parser = argparse.ArgumentParser(description='Run the algorithm to solve PDE pro
 parser.add_argument('--anisotropic', action='store_true', help='Enable anisotropic mode (default: False)')
 parser.add_argument('--sigma_max', type=float, default=1.0, help='Maximum value of the kernel width.')
 parser.add_argument('--sigma_min', type=float, default=1e-3, help='Minimum value of the kernel width.')
-parser.add_argument('--blocksize', type=int, default=100, help='Block size for the anisotropic mode.')
+parser.add_argument('--blocksize', type=int, default=100, help='Max size for Hessian Matrix.')
 parser.add_argument('--Nobs', type=int, default=50, help='Base number of observations')
 parser.add_argument('--sampling', type=str, default='grid', help='Sampling method for the observations.')
 parser.add_argument('--scale', type=float, default=1000, help='penalty for the boundary condition')

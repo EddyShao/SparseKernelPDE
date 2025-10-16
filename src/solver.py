@@ -50,7 +50,7 @@ def solve(p, y_ref, alg_opts):
     plot_final = alg_opts.get('plot_final', True)
     plot_every = alg_opts.get('plot_every', 0)
     print_every = alg_opts.get('print_every', 20)
-    MAX_VAR  = alg_opts.get('MAX_VAR', 1000)
+    blocksize  = alg_opts.get('blocksize', 1000)
 
     Ntrial = alg_opts.get('Ntrial', 1000)
     T = alg_opts.get('T', 300)
@@ -132,7 +132,7 @@ def solve(p, y_ref, alg_opts):
         Gp = Gp * suppGp[None, :] # only keep the active points #### TODO: ADD ACTIVE POINTS SETTING ####
 
         compact_ind = jnp.argsort(~suppGp) # index used to shift all the active points to the front
-        compact_ind = compact_ind[:MAX_VAR]
+        compact_ind = compact_ind[:blocksize]
         inv_compact_ind = jnp.argsort(compact_ind) # index used to shift all the active points back to the original order
       
         Gp_compact = Gp[:, compact_ind] # compacted gradient matrix 
