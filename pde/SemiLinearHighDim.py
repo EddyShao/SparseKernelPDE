@@ -176,7 +176,10 @@ class PDE:
         method: 'uniform' or 'grid'
         """
 
-        return sample_cube_obs(self.D, Nobs, method=method)
+        # obs_int, obs_bnd = sample_cube_obs(self.D, Nobs, method=method)
+        Nobs_int, Nobs_bnd = int((Nobs - 2)**self.d), 2 * self.d * (Nobs - 2)**(self.d - 1)
+        obs_int, obs_bnd = sample_cube_obs(self.D, Nobs_int, Nobs_bnd, method=method, rng=self.key)
+        return obs_int, obs_bnd
 
     def sample_param(self, Ntarget):
         """
