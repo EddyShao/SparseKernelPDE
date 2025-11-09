@@ -232,6 +232,99 @@ def _sample_boundary_uniform(key, D, N):
     pts = pts.at[rows, axes_idx].set(clamp_vals[rows, axes_idx])
     return pts
 
+
+# ----- exact boundary cardinality (isotropic n per axis) -----
+def _boundary_count_iso(n: int, d: int) -> int:
+    if n <= 0:
+        return 0
+    return n**d - max(n-2, 0)**d
+
+# ----- find the smallest n with boundary >= N -----
+def _n_for_boundary(N: int, d: int) -> int:
+    if N <= 0:
+        return 0
+    lo, hi = 2, 2
+    while _boundary_count_iso(hi, d) < N:
+        hi *= 2
+        if hi > 10**9:
+            break
+    # binary search
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if _boundary_count_iso(mid, d) >= N:
+            hi = mid
+        else:
+            lo = mid + 1
+    return lo  # minimal n with enough boundary points
+
+
+def _grid_boundary_iso(D, n: int):
+    """
+    Exact boundary grid for an axis-aligned box D (shape (d,2)) with n points per axis.
+    Returns all boundary points with no duplicates. Count = n**d - (n-2)**d (for n>=2).
+    """
+    D = jnp.asarray(D)
+    d = int(D.shape[0])
+    n = int(n)
+    if n < 2:
+        # no boundary grid definable with fewer than 2 samples per axis
+        return jnp.zeros((0, d), dtype=D.dtype)
+
+    # Build integer index grid of shape (n^d, d)
+    idx_axes = [jnp.arange(n)] * d
+    mesh = jnp.meshgrid(*idx_axes, indexing="ij")
+    I = jnp.stack([m.reshape(-1) for m in mesh], axis=1)  # (n^d, d), int32
+
+    # Boundary mask: any coordinate at 0 or n-1
+    on_low  = (I == 0)
+    on_high = (I == (n - 1))
+    mask = jnp.any(on_low | on_high, axis=1)
+
+    I_bdry = I[mask]  # (n^d - (n-2)^d, d)
+
+    # Map indices to coordinates: x = low + (idx/(n-1)) * (high-low)
+    lows, highs = D[:, 0], D[:, 1]
+    span = highs - lows
+    I_bdry = I_bdry.astype(D.dtype)
+    pts = lows + (I_bdry / (n - 1)) * span  # (M, d)
+
+    return pts
+
+
+def _sample_boundary_grid(D, N):
+    """
+    D: (d,2) box
+    N: desired number of boundary points (exact)
+    key: if provided, random subset; else deterministic stride subset
+    nudge_eps: if set, clamp points to [low+eps, high-eps] to avoid exact endpoints
+    """
+    D = jnp.asarray(D)
+    d = int(D.shape[0])
+
+    if N <= 0:
+        return jnp.zeros((0, d), dtype=D.dtype)
+
+    n = _n_for_boundary(int(N), d)
+    pts_full = _grid_boundary_iso(D, n)
+    # M = int(pts_full.shape[0])  # total boundary points for this n
+
+    # if M == N:
+    #     pts = pts_full
+    # elif key is None:
+    #     # Deterministic downsample by stride
+    #     stride = max(1, (M + N - 1) // N)  # ceil(M/N)
+    #     pts = pts_full[::stride][:N]
+    # else:
+    #     # Random choice without replacement
+    #     idx = jax.random.choice(key, M, shape=(N,), replace=False)
+    #     pts = pts_full[idx]
+
+    # if nudge_eps is not None and nudge_eps > 0:
+    #     lows, highs = D[:, 0], D[:, 1]
+    #     pts = jnp.clip(pts, lows + nudge_eps, highs - nudge_eps)
+
+    return pts_full
+
 # ---------- Main API ----------
 def sample_cube_obs(
     D, Nobs_int, Nobs_bnd, method="grid",
@@ -264,7 +357,11 @@ def sample_cube_obs(
 
     # ---- Boundary sampling (shared) ----
     key_int, key_bnd, key_aux = jax.random.split(rng, 3)
-    obs_bnd = _sample_boundary_uniform(key_bnd, D, Nobs_bnd)
+    # obs_bnd = _sample_boundary_uniform(key_bnd, D, Nobs_bnd)
+    if method == "grid":
+        obs_bnd = _sample_boundary_grid(D, Nobs_bnd)
+    else:
+        obs_bnd = _sample_boundary_uniform(key_bnd, D, Nobs_bnd)
 
     # ---- Interior by method ----
     if method == "grid":
@@ -443,35 +540,19 @@ def compute_errors(p, x, s, c, test_int=None, test_bnd=None, y_true_int=None, y_
 
 
 if __name__ == '__main__':
-    D = np.array([
-        [0., 1.],
-        [0., 1.],
-        [0., 1.],
-    ])
+    # D = np.array([
+    #     [0., 1.],
+    #     [0., 1.],
+    #     [0., 1.],
+    # ])
 
-    Nobs = 20
+    # Nobs = 20
 
-    obs_int_grid, obs_bnd_grid = sample_cube_obs(D, Nobs, method='grid')
-    obs_int_uniform, obs_bnd_uniform = sample_cube_obs(D, Nobs, method='uniform')
+    # obs_int_grid, obs_bnd_grid = sample_cube_obs(D, Nobs, method='grid')
+    # obs_int_uniform, obs_bnd_uniform = sample_cube_obs(D, Nobs, method='uniform')
 
-    print(obs_int_grid.shape, obs_bnd_grid.shape)
-    print(obs_int_uniform.shape, obs_bnd_uniform.shape)
+    # print(obs_int_grid.shape, obs_bnd_grid.shape)
+    # print(obs_int_uniform.shape, obs_bnd_uniform.shape)
 
-
-    # import matplotlib.pyplot as plt
-
-    # plt.figure(figsize=(12, 6))
-    # fig, axs = plt.subplots(1, 2, figsize=(12, 6))
-    # axs[0].scatter(obs_int_grid[:, 0], obs_int_grid[:, 1], label='Grid Sampling')
-    # axs[0].scatter(obs_bnd_grid[:, 0], obs_bnd_grid[:, 1], label='Grid Sampling')
-
-    # axs[1].scatter(obs_int_uniform[:, 0], obs_int_uniform[:, 1], label='Uniform Sampling')
-    # axs[1].scatter(obs_bnd_uniform[:, 0], obs_bnd_uniform[:, 1], label='Uniform Sampling')
-    # plt.suptitle('Sampling Observations')
-    # axs[0].set_title('Interior Observations')
-    # axs[1].set_title('Boundary Observations')
-    
-    # plt.title('Grid Sampling')
-    # plt.legend()
-    # plt.show()
-
+    temp = _grid_boundary_iso(np.array([[-1., 1.], [-1., 1.], [-1., 1.], [-1, 1]]), 8)  
+    print(temp.shape)
