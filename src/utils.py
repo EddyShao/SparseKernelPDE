@@ -306,22 +306,6 @@ def _sample_boundary_grid(D, N):
 
     n = _n_for_boundary(int(N), d)
     pts_full = _grid_boundary_iso(D, n)
-    # M = int(pts_full.shape[0])  # total boundary points for this n
-
-    # if M == N:
-    #     pts = pts_full
-    # elif key is None:
-    #     # Deterministic downsample by stride
-    #     stride = max(1, (M + N - 1) // N)  # ceil(M/N)
-    #     pts = pts_full[::stride][:N]
-    # else:
-    #     # Random choice without replacement
-    #     idx = jax.random.choice(key, M, shape=(N,), replace=False)
-    #     pts = pts_full[idx]
-
-    # if nudge_eps is not None and nudge_eps > 0:
-    #     lows, highs = D[:, 0], D[:, 1]
-    #     pts = jnp.clip(pts, lows + nudge_eps, highs - nudge_eps)
 
     return pts_full
 
