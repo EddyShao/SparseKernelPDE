@@ -81,15 +81,18 @@ def save_iter(p_idx, alg_out, idx):
     xk_padded = np.zeros((num_iter, max_supp, p_idx.d))
     sk_padded = np.zeros((num_iter, max_supp, p_idx.dim-p_idx.d))
     ck_padded = np.zeros((num_iter, max_supp))
+    suppc_padded = np.zeros((num_iter, max_supp), dtype=bool)
 
     for i in range(num_iter):
         xk_padded[i, :alg_out['xk'][i].shape[0]] = alg_out['xk'][i]
         sk_padded[i, :alg_out['sk'][i].shape[0]] = alg_out['sk'][i]
         ck_padded[i, :alg_out['ck'][i].shape[0]] = alg_out['ck'][i]
+        suppc_padded[i, :len(alg_out['suppc'][i])] = alg_out['suppc'][i]
 
     alg_out['xk'] = xk_padded
     alg_out['sk'] = sk_padded
     alg_out['ck'] = ck_padded
+    alg_out['suppc'] = suppc_padded
 
     # combine alg_out with alg_opts
     alg_out.update(alg_opts)

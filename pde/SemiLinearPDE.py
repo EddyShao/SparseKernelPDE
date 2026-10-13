@@ -2,7 +2,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-from src.Kernels import GaussianKernel
+from src.GaussianKernel import GaussianKernel
 from src.utils import Objective, sample_cube_obs
 import jax
 import jax.numpy as jnp
@@ -16,15 +16,15 @@ class Kernel(GaussianKernel):
             self.D = D
 
             # linear results for computing E and B
-            self.linear_E = (self.kappa_X_c_Xhat, self.Lap_kappa_X_c_Xhat)
-            self.linear_B = (self.kappa_X_c_Xhat,)
+            self.linear_E = (self.gauss_X_c_Xhat, self.Lap_gauss_X_c_Xhat)
+            self.linear_B = (self.gauss_X_c_Xhat,)
             self.DE = (0,) 
             self.DB = ()     
 
         @partial(jax.jit, static_argnums=(0,))
-        def kappa(self, x, s, xhat):
+        def gauss(self, x, s, xhat):
             # print('compiled')
-            output = super().kappa(x, s, xhat)
+            output = super().gauss(x, s, xhat)
             if self.mask:
                 mask = jnp.prod(xhat - self.D[:, 0]) * jnp.prod(self.D[:, 1] - xhat)
                 output = output * mask
@@ -32,38 +32,38 @@ class Kernel(GaussianKernel):
 
 
         @partial(jax.jit, static_argnums=(0,))
-        def Lap_kappa_X_c(self, X, S, c, xhat):
+        def Lap_gauss_X_c(self, X, S, c, xhat):
             # print('compiled')
-            return jnp.trace(jax.hessian(self.kappa_X_c, argnums=3)(X, S, c, xhat))
+            return jnp.trace(jax.hessian(self.gauss_X_c, argnums=3)(X, S, c, xhat))
 
 
         @partial(jax.jit, static_argnums=(0,))
-        def Lap_kappa_X_c_Xhat(self, X, S, c, Xhat): 
-            return jax.vmap(self.Lap_kappa_X_c, in_axes=(None, None, None, 0))(X, S, c, Xhat)
+        def Lap_gauss_X_c_Xhat(self, X, S, c, Xhat): 
+            return jax.vmap(self.Lap_gauss_X_c, in_axes=(None, None, None, 0))(X, S, c, Xhat)
 
         @partial(jax.jit, static_argnums=(0,))
-        def E_kappa_X_c(self, X, S, c, xhat):
-            return - self.Lap_kappa_X_c(X, S, c, xhat) + self.kappa_X_c(X, S, c, xhat) ** 3
+        def E_gauss_X_c(self, X, S, c, xhat):
+            return - self.Lap_gauss_X_c(X, S, c, xhat) + self.gauss_X_c(X, S, c, xhat) ** 3
 
         @partial(jax.jit, static_argnums=(0,))
-        def B_kappa_X_c(self, X, S, c, xhat):
+        def B_gauss_X_c(self, X, S, c, xhat):
             # print('compiled')
-            return self.kappa_X_c(X, S, c, xhat)
+            return self.gauss_X_c(X, S, c, xhat)
 
 
-        def E_kappa_X_c_Xhat(self, *linear_results):
+        def E_gauss_X_c_Xhat(self, *linear_results):
             return - linear_results[1] + linear_results[0] ** 3
 
-        def B_kappa_X_c_Xhat(self, *linear_results):
+        def B_gauss_X_c_Xhat(self, *linear_results):
             return linear_results[0]
 
         @partial(jax.jit, static_argnums=(0,))
-        def DE_kappa(self, x, s, xhat, *args):
-             return -jnp.trace(jax.hessian(self.kappa, argnums=2)(x, s, xhat)) + 3 * args[0] ** 2 * self.kappa(x, s, xhat)
+        def DE_gauss(self, x, s, xhat, *args):
+             return -jnp.trace(jax.hessian(self.gauss, argnums=2)(x, s, xhat)) + 3 * args[0] ** 2 * self.gauss(x, s, xhat)
 
         @partial(jax.jit, static_argnums=(0,))
-        def DB_kappa(self, x, s, xhat, *args):
-            return self.kappa(x, s, xhat)
+        def DB_gauss(self, x, s, xhat, *args):
+            return self.gauss(x, s, xhat)
 
     
 class PDE:
@@ -154,9 +154,7 @@ class PDE:
         method: 'uniform' or 'grid'
         """
 
-        # obs_int, obs_bnd = sample_cube_obs(self.D, Nobs, method=method)
-        Nobs_int, Nobs_bnd = int((Nobs - 2)**2), 4 * (Nobs - 1)
-        obs_int, obs_bnd = sample_cube_obs(self.D, Nobs_int, Nobs_bnd, method=method, rng=self.key)
+        obs_int, obs_bnd = sample_cube_obs(self.D, Nobs, method=method)
         return obs_int, obs_bnd
 
     def sample_param(self, Ntarget):
@@ -207,7 +205,7 @@ class PDE:
         fig.colorbar(surf1, ax=ax1, shrink=0.5, aspect=5)
 
         # Compute predicted solution
-        Gu = self.kernel.kappa_X_c_Xhat(x, s, c, t)
+        Gu = self.kernel.gauss_X_c_Xhat(x, s, c, t)
         # sigma is sigmoid of S
         sigma = self.kernel.sigma(s)
 
@@ -277,10 +275,10 @@ class PDE:
 #     # # build the meshgrid
 #     # t1, t2 = np.meshgrid(t_1, t_2)
 #     # t = np.vstack((t1.flatten(), t2.flatten()))
-#     # k, dk, kappa = p.k(t, x)       
+#     # k, dk, gauss = p.k(t, x)       
 #     # print(k.shape)
 #     # print(dk.shape)
-#     # print(kappa.shape)
+#     # print(gauss.shape)
 
 
 
